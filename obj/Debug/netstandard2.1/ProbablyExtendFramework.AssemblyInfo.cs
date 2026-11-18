@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("ProbablyExtendFramework")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e8a16f7cfd97496f669134e642a1061f2b2418ea")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+61c95c75f2f1cadab8f76d28fb7cff6ca3e2fc81")]
 [assembly: System.Reflection.AssemblyProductAttribute("ProbablyExtendFramework")]
 [assembly: System.Reflection.AssemblyTitleAttribute("ProbablyExtendFramework")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
