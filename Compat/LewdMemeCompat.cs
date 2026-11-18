@@ -3,7 +3,7 @@
 //   启用条件：lewd_meme 已启用，且 TextureExtend 配置里“lewd_meme 好感立绘”开着（默认开）。
 //   做法：
 //     · 识别钩子：带 MAIDEN_FEMALE 标签的物品 → 立绘 ID = 它的 MAIDEN_SPRITE_SRC（lewd_meme 记的原版立绘字段）。
-//     · 过夜处理后：按 MAIDEN_AFFECTION 算一档，写进物品标签 TEXEXT_LM_MOOD，然后重算这件物品。
+//     · 过夜处理后：按 MAIDEN_AFFECTION 算一档，写进物品标签 PEF_LM_MOOD，然后重算这件物品。
 //         ≤ −60 angry · ≤ −20 unhappy · ≥ 60 delighted · ≥ 20 happy · 其余无（显示高清本体）
 //     · 四条规则（权重 1，扩展 mod 的规则权重更高就会盖过它）只认这个标签，所以白天的检查点不会让它变来变去。
 //   识别钩子设为“认出就接管”：少女道具一律由框架画高清图（0.4.2，Lune：退回 lewd_meme 原图会变糊）。
@@ -17,7 +17,8 @@ namespace ProbablyExtendFramework
     {
         internal const string Owner = "TextureExtend.Compat.LewdMeme";
         private const string BaseModId = "lewd_meme";
-        internal const string MoodTag = "TEXEXT_LM_MOOD";
+        // ClaudeNote: 1.0.0 存档标签前缀由 TEXEXT_ 改为 PEF_（发布前定名，不做旧存档迁移）。
+        internal const string MoodTag = "PEF_LM_MOOD";
         private static readonly string[] Moods = { "angry", "unhappy", "delighted", "happy" };
         private static bool active;
 

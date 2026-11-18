@@ -53,6 +53,9 @@ namespace ProbablyExtendFramework
         /// <summary>这张立绘归进了别人的 root_key 组（它是那张立绘的差分候选，不是独立的来客立绘）。</summary>
         internal static bool IsMember(string portrait) { return joins.Exists(j => j.member == portrait); }
 
+        /// <summary>root 的这个差分其实是归进来的另一张立绘（差分名是那张立绘的 ID，不是状态名——不拆成标签）。</summary>
+        internal static bool IsMemberVariant(string root, string variant) { return joins.Exists(j => j.root == root && j.state == variant); }
+
         internal static void Remove(string owner)
         {
             joins.RemoveAll(j => j.owner == owner);

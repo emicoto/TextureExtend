@@ -137,12 +137,15 @@ namespace ProbablyExtendFramework
             if (s == null) return false;
             image.sprite = s;
             // ClaudeNote: 0.5.0 通知跟着柜台走的显示（例：BroodMeme 给 lewd_meme 客人格打的补丁，让左上角的客人跟着换表情）
-            if (OnCounterShown != null)
-            {
-                try { OnCounterShown(portraitId, PortraitLibrary.Normal(state)); }
-                catch (Exception ex) { Entry.Warn("OnCounterShown listener failed: " + ex.Message); }
-            }
+            RaiseCounterShown(portraitId, PortraitLibrary.Normal(state));
             return true;
+        }
+
+        internal static void RaiseCounterShown(string portraitId, string state)
+        {
+            if (OnCounterShown == null) return;
+            try { OnCounterShown(portraitId, state); }
+            catch (Exception ex) { Entry.Warn("OnCounterShown listener failed: " + ex.Message); }
         }
 
         /// <summary>柜台上的来客换了图之后（立绘 ID、状态；本体为空字符串）。</summary>

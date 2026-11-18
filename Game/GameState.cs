@@ -7,54 +7,34 @@ using Newtonsoft.Json;
 
 namespace ProbablyExtendFramework
 {
-    /// <summary>全局旗标：mod 写、表格的 flag:名字 读。存在 ModData（跨存档通用，不写进存档）。</summary>
+    /// <summary>旗标：mod 写、表格的 flag:名字 读。</summary>
+    // ClaudeNote: 1.0.0 rc6 改存进存档位（Lune 2026-11-18：框架给个统一的 flag 存档位）。之前存在 ModData 文件里、所有存档共用，
+    //   记不了某一局的剧情进度。现在是游戏给 mod 的存档数据（跟着存档走），键 = 本框架名下的 flag.<名字>：
+    //   别的 mod 不引用框架也能写 —— ModHelper.SetModData("Lune.ProbablyExtendFramework", "flag.brood.clara.ep1", "accept")。
+    //   框架只读不管：谁写的谁负责改、负责清。没读档时（标题界面）读到的都是空。
     public static class Flags
     {
-        private const string File = "Flags.json";
-        private static Dictionary<string, string> values;
-        private static bool dirty;
+        internal const string Prefix = "flag.";
 
-        private static Dictionary<string, string> All
+        public static string Get(string name)
         {
-            get
-            {
-                if (values != null) return values;
-                values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                try
-                {
-                    string text = ModHelper.ReadModDataFileText(Painter.ModId, File);
-                    if (!string.IsNullOrEmpty(text))
-                    {
-                        var loaded = JsonConvert.DeserializeObject<Dictionary<string, string>>(text);
-                        if (loaded != null) foreach (var kv in loaded) values[kv.Key] = kv.Value;
-                    }
-                }
-                catch (Exception ex) { ProbablyExtendFramework.Entry.Warn("flags not read: " + ex.Message); }
-                return values;
-            }
+            if (string.IsNullOrEmpty(name)) return null;
+            try { return ModHelper.GetModData(Painter.ModId, Prefix + name, null); }
+            catch (Exception) { return null; }
         }
 
-        public static bool IsSet(string name) { return name != null && All.TryGetValue(name, out string v) && v != "" && v != "0" && !string.Equals(v, "false", StringComparison.OrdinalIgnoreCase); }
-        public static string Get(string name) { return name != null && All.TryGetValue(name, out string v) ? v : null; }
+        public static bool IsSet(string name) { string v = Get(name); return !string.IsNullOrEmpty(v) && v != "0" && !string.Equals(v, "false", StringComparison.OrdinalIgnoreCase); }
         public static void Set(string name, bool on = true) { Set(name, on ? "1" : null); }
         public static void Set(string name, int value) { Set(name, value.ToString(CultureInfo.InvariantCulture)); }
 
-        /// <summary>value 为 null = 清掉。写完不立刻存盘，入睡时或停用时一起存。</summary>
+        /// <summary>value 为 null = 清掉。改完当场通知框架重算（正显示着的立刻换）。</summary>
         public static void Set(string name, string value)
         {
-            if (string.IsNullOrEmpty(name)) return;
-            if (value == null) { if (All.Remove(name)) dirty = true; return; }
-            if (All.TryGetValue(name, out string old) && old == value) return;
-            All[name] = value;
-            dirty = true;
-        }
-
-        internal static void Save()
-        {
-            if (!dirty || values == null) return;
-            dirty = false;
-            try { ModHelper.WriteModDataFileText(Painter.ModId, File, JsonConvert.SerializeObject(values, Formatting.Indented)); }
-            catch (Exception ex) { ProbablyExtendFramework.Entry.Warn("flags not saved: " + ex.Message); }
+            if (string.IsNullOrEmpty(name) || !PlayerStore.HasInstance) return;
+            if (Get(name) == value) return;
+            if (value == null) ModHelper.RemoveModData(Painter.ModId, Prefix + name);
+            else ModHelper.SetModData(Painter.ModId, Prefix + name, value);
+            Painter.Notify();
         }
     }
 

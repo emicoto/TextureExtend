@@ -27,6 +27,9 @@ namespace ProbablyExtendFramework
             public string id, src, key, name; public string[] tags; public string[] types; public string[] variants;
             public string sig;                          // images 里的：这张图的身份串（file|… / res|…；游戏原图和已载入的 mod 贴图没有）。0.9.7 工坊缩略图在标题界面靠它读原图
             public Dictionary<string, string> vsigs;    // portrait 里的：差分 → 身份串（现在选中来源的）
+            // ClaudeNote: 1.0.0 rc6 差分层（工坊点选差分用）：
+            public Dictionary<string, string[]> vtags;   // 差分 → 别处登记给它的标签（名字拆出来的不记，现算）
+            public List<string[]> looks;                 // 道具的：贴图组里的差分，每项 { 差分, 来源, mod（外部图片为空）, 贴图键 或 身份串 }
             public string atlas, sprite; public bool modSprite;   // 道具的图在哪（0.9.2：标题界面没有道具目录，缩略图靠这三样直接取）
         }   // variants：立绘的差分（工坊预览用）   // types：道具的主分类（小写）；立绘没有。key：只有 images 里的有，完整写法 来源:图ID~编号
         // ClaudeNote: 0.8.0 images = 全部贴图，一个来源一张（Lune：工坊窗口是全列出）。portrait 仍是一个图 ID 一条——
@@ -177,7 +180,7 @@ namespace ProbablyExtendFramework
                     if (vsigs == null) vsigs = new Dictionary<string, string>();
                     vsigs[v] = vs;
                 }
-                building.portrait.Add(new Target { id = p.Field, src = p.Source, key = ImageKey.Make(p.Source, p.Field), tags = tags, variants = variants.ToArray(), vsigs = vsigs });
+                building.portrait.Add(new Target { id = p.Field, src = p.Source, key = ImageKey.Make(p.Source, p.Field), tags = tags, variants = variants.ToArray(), vsigs = vsigs, vtags = VariantTagsOf(PaintTarget.Portrait, p.Field, variants) });
                 // ClaudeNote: 1.0.0 差分按来源各记各的（Lune：有差分的只有深空娘化，但它不是选中的来源时，工坊里一张差分都看不到——
                 //   之前只记了“现在选中的来源”的差分）。
                 foreach (string key in PortraitLibrary.ImagesOf(p.Field))
@@ -202,7 +205,37 @@ namespace ProbablyExtendFramework
         {
             if (building == null || string.IsNullOrEmpty(itemId)) return;
             ItemDef def = ItemDefs.Of(itemId);
-            building.item.Add(new Target { id = itemId, name = def.name, src = def.source, atlas = def.atlas, sprite = def.sprite, modSprite = def.modSprite, tags = Without(ItemTags.Of(itemId), Item), types = Array.ConvertAll(def.types, t => t.ToLowerInvariant()) });
+            var t = new Target { id = itemId, name = def.name, src = def.source, atlas = def.atlas, sprite = def.sprite, modSprite = def.modSprite, tags = Without(ItemTags.Of(itemId), Item), types = Array.ConvertAll(def.types, x => x.ToLowerInvariant()) };
+            List<ItemArt.Look> looks = ItemArt.All(itemId);
+            if (looks.Count > 0)
+            {
+                t.looks = new List<string[]>();
+                var names = new List<string>();
+                foreach (ItemArt.Look l in looks)
+                {
+                    t.looks.Add(new[] { l.variant, l.owner, l.External ? "" : l.mod, l.External ? l.sig : l.key });
+                    if (!names.Contains(l.variant)) names.Add(l.variant);
+                    if (!building.names.ContainsKey(l.owner)) building.names[l.owner] = Sources.Label(l.owner);
+                }
+                t.variants = names.ToArray();
+                t.vtags = VariantTagsOf(PaintTarget.StaticItem, itemId, names);
+            }
+            building.item.Add(t);
+        }
+
+        // 别处（不是工坊自己）登记给差分的标签
+        private static Dictionary<string, string[]> VariantTagsOf(PaintTarget kind, string id, IEnumerable<string> variants)
+        {
+            Dictionary<string, string[]> map = null;
+            foreach (string v in variants)
+            {
+                List<string> have = VariantTags.Registered(kind, id, v);
+                have.RemoveAll(tag => Mine(kind == PaintTarget.Portrait ? Portrait : Item, id + "#" + v).Contains(tag));
+                if (have.Count == 0) continue;
+                if (map == null) map = new Dictionary<string, string[]>();
+                map[v] = have.ToArray();
+            }
+            return map;
         }
 
         internal static void SnapshotEnd()
@@ -565,7 +598,7 @@ namespace ProbablyExtendFramework
 
         internal static string Csv()
         {
-            var b = new StringBuilder("# TextureExtend Workshop export\nkind,target,id,group,under,with,without,manual,when\n");
+            var b = new StringBuilder("# TextureExtend Workshop export\nkind,target,id,group,under,with,without,manual,when,tag\n");
             foreach (string scope in new[] { Portrait, Item })
             {
                 var rows = new List<string>();
@@ -589,6 +622,14 @@ namespace ProbablyExtendFramework
                     foreach (KeyValuePair<string, string> kv in Current.join) rows.Add("join," + scope + "," + kv.Key + "," + kv.Value + ",,,,," + LimitOf(kv.Key));
                     foreach (string key in Current.auto)
                         if (key.StartsWith(scope + "|", StringComparison.Ordinal)) { string id = key.Substring(scope.Length + 1); rows.Add("auto," + scope + "," + id + ",,,,,," + LimitOf(id)); }
+                }
+                // ClaudeNote: 1.0.0 rc6 差分的判断条件：“类别|ID#差分” → 条件成立时切到这个差分（一条规则）
+                foreach (KeyValuePair<string, string> kv in Current.limit)
+                {
+                    if (!kv.Key.StartsWith(scope + "|", StringComparison.Ordinal) || string.IsNullOrEmpty(kv.Value)) continue;
+                    string full = kv.Key.Substring(scope.Length + 1);
+                    int hash = full.IndexOf('#');
+                    if (hash > 0 && hash < full.Length - 1) rows.Add("rule," + scope + "," + full.Substring(0, hash) + ",,,,,," + kv.Value + "," + full.Substring(hash + 1));
                 }
                 if (rows.Count == 0) continue;
                 rows.Sort(string.CompareOrdinal);

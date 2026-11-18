@@ -76,11 +76,12 @@ namespace ProbablyExtendFramework
         //   读档时怎么定（Decide）：读 Info → 来源还在不在 → 按现在激活的 mod 排出的优先级，三选一：
         //     照 Cur 载入 / 换一个来源并更新 Cur / 谁都不提供这张图了 → 显示 OG（三个标签留着，来源回来了自动接回）。
         /// <summary>物品标签 textureCur：这件物品现在的图（PaintId.Text）。随物品存档。</summary>
-        public const string SourceTag = "TEXEXT_CUR";
+        // ClaudeNote: 1.0.0 存档标签前缀由 TEXEXT_ 改为 PEF_（发布前定名，不做旧存档迁移）。
+        public const string SourceTag = "PEF_CUR";
         /// <summary>物品标签 textureOG：第一次经框架换图之前，物品原来的图与占格。</summary>
-        public const string OgTag = "TEXEXT_OG";
+        public const string OgTag = "PEF_OG";
         /// <summary>物品标签 textureInfo：来源是自动挑的还是点名的、要的是哪张。</summary>
-        public const string InfoTag = "TEXEXT_INFO";
+        public const string InfoTag = "PEF_INFO";
         private const string AutoMode = "auto", FixedMode = "fixed", AdoptedFlag = "adopted";
         private const string UsedKey = "used";   // 本局存档里用到的图（读档时在物品还原之前先载入）
 
@@ -460,7 +461,7 @@ namespace ProbablyExtendFramework
                 ImageKey.Parse(id.Key, out string from, out string portrait, out int number);
                 if (number == 0) Fit.Record(from ?? PortraitLibrary.SourceOf(portrait), portrait, pixels, w, rect);   // 同来源的第 2、3… 张不算这个来源的“标准身材”
             }
-            Color32[] framed = Raster.Frame(pixels, w, h, rect, id.Cells * PixelsPerCell, out int size, out bool point);
+            Color32[] framed = Raster.Frame(pixels, w, h, rect, id.Cells * PixelsPerCell, out int size, out bool point, !SourceReader.WasShrunk);
             if (framed == null) return null;
             var tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
             tex.SetPixels32(framed);
@@ -604,6 +605,9 @@ namespace ProbablyExtendFramework
             if (tex != null) UnityEngine.Object.Destroy(tex);
         }
 
+        /// <summary>本框架自己的贴图表（道具贴图组把外部差分放进来，道具才指得过去）。还没载入返回 null。</summary>
+        internal static Dictionary<string, Sprite> OwnSprites() { return Self()?.Sprites; }
+
         private static LoadedMod Self()
         {
             if (self == null) self = ModLoader.Mods.Find(m => m?.Manifest != null && m.Manifest.ID == ModId);
@@ -631,6 +635,8 @@ namespace ProbablyExtendFramework
             // ClaudeNote: 读档 = 物品全部重建。先放掉上一局留在内存里的成品（切换差分攒下的也在内），本局要用的下面按清单重新载入。
             ReleaseMemory();
             used.Clear();
+            Wants.Reload();
+            ItemArt.Preload();
             string text = ModHelper.GetModData(ModId, UsedKey, "");
             if (string.IsNullOrEmpty(text)) return;
             int ok = 0;
@@ -672,11 +678,14 @@ namespace ProbablyExtendFramework
         {
             if (!PlayerStore.HasInstance) return;
             var alive = new HashSet<string>();
+            var looks = new HashSet<string>();
             foreach (GameItem item in Items.All())
             {
                 PaintId id = SourceOf(item);
                 if (id.Valid) alive.Add(id.Text);
+                else if (item != null && item.useSpriteFromMod && item.spriteAtlasPath == ModId && item.spritePath != null && item.spritePath.StartsWith(ItemArt.Prefix, StringComparison.Ordinal)) looks.Add(item.spritePath);
             }
+            ItemArt.PruneUsed(looks);
             if (!alive.SetEquals(used))
             {
                 used.Clear();
@@ -709,6 +718,7 @@ namespace ProbablyExtendFramework
             SourceReader.Release();
             PortraitLibrary.ReleaseWrapped();
             PortraitLibrary.ForgetEmbedded();
+            ItemArt.Shutdown();
             self = null;
         }
 

@@ -339,6 +339,15 @@ namespace ProbablyExtendFramework
                 Say(T("已恢复游戏原版：逐张指定全部取消、立绘包全部取消激活、主来源 = 游戏原版。想留着刚才那套，下次先存成预设。", "Back to vanilla: per-key choices cleared, packs turned off, main source = game."));
                 Build();
             }, false, 14f);
+            // ClaudeNote: 1.0.0 rc6 本地图片：放哪 + 重新扫描（之前只有调试面板里能重扫，而调试面板要 dev.txt 才打得开）
+            Ui.Label(c, T("本地图片放在 ModData/Lune_ProbablyExtendFramework/Local（和 Player.log 同一个目录下）", "Local images: ModData/Lune_ProbablyExtendFramework/Local (next to Player.log)"), 0f, rowY - 22f, CW, 18f, 11f, Skin.Note);
+            Ui.Button(c, T("重新扫描本地图片", "Rescan local images"), CW - 180f, rowY, 180f, 32f, () =>
+            {
+                if (!LocalImages.Available) Say(T("要装并启用“文件伴生”mod 才能读本地图片。", "Local images need the Files companion mod."), true);
+                else if (!PortraitLibrary.Ready) Say(T("进了存档再扫描（要对照游戏的立绘表和道具目录）。", "Load a save first."), true);
+                else { int n = LocalImages.Scan(); ItemArt.Discover(); Painter.Notify(); Say(T("本地图片：登记了 ", "Local images: ") + n + T(" 张。", " registered.")); }
+                Build();
+            }, false, 14f);
             if (main != null) Ui.Button(c, T("不指定主来源", "No main source"), 158f, rowY, 150f, 32f, () => { Sources.SetMain(null); Say(T("已清除主来源。", "Main source cleared.")); Build(); }, false, 14f);
             if (pages > 1)
             {
@@ -511,7 +520,9 @@ namespace ProbablyExtendFramework
 
             // ClaudeNote: 0.9.7 选了一张立绘之后，左边整块换成这张立绘的组（Lune 2026-11-18）；左下角“返回”回到总览
             Workshop.Target sel = all.Find(t => t.id == picked);
+            if (sel == null || (items && pickedVariant != null && (sel.variants == null || Array.IndexOf(sel.variants, pickedVariant) < 0))) pickedVariant = null;
             if (!items && sel != null) Group(c, sel);
+            else if (items && sel != null) ItemGroup(c, sel);
             else
             {
                 // 左：筛选 + 总览（版式照 Lune 2026-11-17 的图例：4 列 3 行）
@@ -554,7 +565,7 @@ namespace ProbablyExtendFramework
                     if (!items && Workshop.Current.join.TryGetValue(t.id, out string joined)) under = "→ " + joined;   // 归到了别的 root_key 名下
                     if (mine > 0) under += (under.Length > 0 ? "  " : "") + "+" + mine;
                     if (under.Length > 0) Ui.Label(card.transform, under, 4f, 78f, cardW - 8f, 16f, 11f, Skin.Note, TextAlignmentOptions.Center);
-                    Ui.Clickable(card, () => { picked = t.id; addAt = 0; rootTyping = null; groupPage = 0; Build(); });
+                    Ui.Clickable(card, () => { picked = t.id; pickedVariant = null; addAt = 0; rootTyping = null; groupPage = 0; Build(); });
                 }
                 // 翻页放在总览下面，居中；只有一页时不画，到头的那一侧不画
                 if (pages > 1)
@@ -572,7 +583,10 @@ namespace ProbablyExtendFramework
             RectTransform r = Ui.Rect(c, "right", RightX, 0f, RightW, CH);
             if (sel == null) { Ui.Label(r, T("左边选一个。", "Pick one on the left."), 0f, 0f, RightW, 26f, 15f, Skin.Note); return; }
             bool named = items && !string.IsNullOrEmpty(sel.name) && sel.name != sel.id;
-            Ui.Label(r, named ? sel.name : sel.id, 0f, 0f, RightW - 230f, 26f, 18f, Skin.Cream);
+            // ClaudeNote: 1.0.0 rc6 点选了差分：右栏的目标换成“这个差分”（标签存在 ID#差分 名下；本体的标签它都继承，在这里只读）
+            string targetId = pickedVariant != null ? sel.id + "#" + pickedVariant : sel.id;
+            PaintTarget kind = items ? PaintTarget.StaticItem : PaintTarget.Portrait;
+            Ui.Label(r, (named ? sel.name : sel.id) + (pickedVariant != null ? "  ·  " + Labels.Of(pickedVariant) : ""), 0f, 0f, RightW - 230f, 26f, 18f, Skin.Cream);
             Ui.Label(r, (named ? sel.id + "  ·  " : "") + (string.IsNullOrEmpty(sel.src) ? "" : T("来源 ", "from ") + SourceName(sel)), RightW - 230f, 0f, 230f, 26f, 12f, Skin.Note, TextAlignmentOptions.MidlineRight);
             Ui.Box(r, 0f, 28f, RightW, 1f, Skin.White, Skin.Line);
 
@@ -580,12 +594,21 @@ namespace ProbablyExtendFramework
             float y = 36f;
 
             // 已有标签一览：自带的（只读）+ 我加的（青框，点一下摘掉）
-            List<string> mineTags = Workshop.Mine(scope, sel.id);
+            List<string> mineTags = Workshop.Mine(scope, targetId);
             var have = new List<string>(sel.tags);
+            if (pickedVariant != null)
+            {
+                foreach (string tag in Workshop.Mine(scope, sel.id)) if (!have.Contains(tag)) have.Add(tag);                       // 本体上加的：继承
+                foreach (string tag in VariantTags.FromName(pickedVariant)) if (!have.Contains(tag)) have.Add(tag);                // 差分名拆出来的
+                if (sel.vtags != null && sel.vtags.TryGetValue(pickedVariant, out string[] own)) foreach (string tag in own) if (!have.Contains(tag)) have.Add(tag);
+                mineTags = mineTags.FindAll(tag => !have.Contains(tag));
+            }
             foreach (string tag in mineTags) if (!have.Contains(tag)) have.Add(tag);
-            Ui.Info(r, T("已有标签一览", "Tags it has"), T("灰框是游戏和框架认出来的，只读。青框是你加的，点一下摘掉。", "Grey ones are built in and read-only. Teal ones are yours; click one to remove it."), inX, y);
+            Ui.Info(r, T("已有标签一览", "Tags it has"), pickedVariant != null
+                ? T("这个差分的标签。灰框只读：本体的标签（差分都继承）、差分名按 _ 拆出来的、别处登记的。青框是你给这个差分加的，点一下摘掉。框架按标签自动挑差分：差分自己的标签全在“现在要的标签”里、带得最多的那个。", "This variant's tags. Grey = inherited from the base, split from its name, or registered elsewhere. Teal = added here; click to remove. The framework picks the variant whose own tags are all wanted, the most specific one.")
+                : T("灰框是游戏和框架认出来的，只读。青框是你加的，点一下摘掉。", "Grey ones are built in and read-only. Teal ones are yours; click one to remove it."), inX, y);
             float chipsH = items ? 72f : 46f;
-            Ui.Chips(r, have, inX + 8f, y + 26f, inW - 8f, chipsH, name => mineTags.Contains(name) ? Skin.ChipMine : Skin.Chip, name => { Workshop.Peel(scope, sel.id, name); Touch(); }, T("没有", "None"), name => mineTags.Contains(name));
+            Ui.Chips(r, have, inX + 8f, y + 26f, inW - 8f, chipsH, name => mineTags.Contains(name) ? Skin.ChipMine : Skin.Chip, name => { Workshop.Peel(scope, targetId, name); Touch(); }, T("没有", "None"), name => mineTags.Contains(name));
             y += 26f + chipsH + 6f;
 
             // 添加标签：左边的标签组只是筛选（第一项留空 = 不筛），右边是这个组里还能加的标签
@@ -605,13 +628,31 @@ namespace ProbablyExtendFramework
             Ui.Button(r, T("添加", "Add"), RightW - 14f - 72f, y + 28f, 72f, 28f, () =>
             {
                 if (addAt <= 0 || addAt > can.Count) { Say(T("先选一个标签。", "Choose a tag first."), true); Build(); return; }
-                Workshop.Stick(scope, sel.id, can[addAt - 1]);
+                Workshop.Stick(scope, targetId, can[addAt - 1]);
                 addAt = 0;
                 Touch();
             }, false, 15f);
             y += 66f;
 
-            string key = Workshop.Key(scope, sel.id);
+            string key = Workshop.Key(scope, targetId);
+            if (pickedVariant != null)
+            {
+                // 差分的判断条件：成立时切到这个差分（导出成一条规则）
+                List<string> conds = Workshop.Triggers();
+                Workshop.Current.limit.TryGetValue(key, out string cond);
+                if (!string.IsNullOrEmpty(cond) && !conds.Contains(cond)) conds.Add(cond);
+                var condNames = new List<string> { T("判断条件（不设）", "Condition (none)") };
+                foreach (string t in conds) condNames.Add(Workshop.TriggerLabel(t));
+                Ui.Info(r, T("判断条件", "Condition"), T("条件成立时自动切到这个差分（立绘：道具上的立绘和柜台来客都管；道具：店里的这种道具）。不设 = 只按标签挑、或由别的 mod / 玩家手动切。", "Switches to this variant while the condition holds. None = only picked by tags, by another mod, or by hand."), inX, y);
+                Ui.Dropdown(r, condNames, string.IsNullOrEmpty(cond) ? 0 : conds.IndexOf(cond) + 1, inX + 120f, y - 2f, inW - 120f, 28f, i =>
+                {
+                    if (i <= 0) Workshop.Current.limit.Remove(key); else Workshop.Current.limit[key] = conds[i - 1];
+                    Touch();
+                });
+                y += 40f;
+                Ui.Label(r, T("自动匹配的标签：来客 visit / leave / sold / bought（+ bonus / malus）；道具 openshop / endshop / wakeup；其余由 mod 写“想要的标签”。", "Auto tags: visitors visit / leave / sold / bought (+ bonus / malus); items openshop / endshop / wakeup; others are set by mods."), inX, y, inW, 44f, 12f, Skin.Note, TextAlignmentOptions.TopLeft, false, true);
+                return;
+            }
             if (items)
             {
                 // 手动选图：只有道具有（Lune 2026-11-17）
@@ -666,6 +707,45 @@ namespace ProbablyExtendFramework
         }
 
         private static string rootTyping;   // root_key 输入框里正打着的字（没点“添加”之前）
+        private static string pickedVariant;   // 组视图里点选的差分（null = 整个目标）
+
+        // ClaudeNote: 1.0.0 rc6 道具的组（Lune 2026-11-18：以道具 ID 为准收进一组，收进后和立绘一样可以点选差分、加删标签 / 判断条件）。
+        //   第一格是本体（游戏或道具自己的 mod 的原图），后面是贴图组里各来源的差分。
+        private static void ItemGroup(RectTransform c, Workshop.Target sel)
+        {
+            var looks = sel.looks ?? new List<string[]>();
+            Ui.Info(c, !string.IsNullOrEmpty(sel.name) ? sel.name : sel.id, T("这种道具的贴图组：本体 + 各来源给它加的差分（同名差分每个来源一张）。点一个差分，右边给它加标签、设判断条件；点本体回到整件道具。差分怎么加：mod 的表格（state,item 行）、或把图片按“道具ID_差分名.png”放进本地图片文件夹。", "This item's image group: the base plus variants from every source. Click a variant to tag it or set a condition; click the base to go back to the item. Add variants with a table row (state,item) or a local image named itemId_variant.png."), 0f, 0f, 26f, true);
+            Ui.Label(c, (looks.Count + 1).ToString(), LeftW - 120f, 0f, 120f, 26f, 13f, Skin.Note, TextAlignmentOptions.MidlineRight);
+            const float gap = 8f, cellH = 170f, imageH = 126f;
+            float cellW = (LeftW - gap * (GroupColumns - 1)) / GroupColumns;
+            int total = looks.Count + 1, pages = Mathf.Max(1, (total + GroupPerPage - 1) / GroupPerPage);
+            groupPage = Mathf.Clamp(groupPage, 0, pages - 1);
+            for (int i = groupPage * GroupPerPage; i < Mathf.Min(total, (groupPage + 1) * GroupPerPage); i++)
+            {
+                int slot = i - groupPage * GroupPerPage;
+                string[] look = i == 0 ? null : looks[i - 1];
+                string variant = look?[0];
+                bool chosen = variant == pickedVariant;
+                Image back = Ui.Box(c, slot % GroupColumns * (cellW + gap), 34f + slot / GroupColumns * (cellH + 6f), cellW, cellH, chosen ? Skin.PanelOn : Skin.Panel, Color.white, true);
+                Image hold = Ui.Box(back.transform, 4f, 4f, cellW - 8f, imageH, Skin.White, Skin.Line);
+                Sprite direct = look == null ? ItemDefs.Sprite(sel.atlas, sel.sprite, sel.modSprite) ?? ItemDefs.Sprite(sel.id) : look[2].Length > 0 ? ItemDefs.Sprite(look[2], look[3], true) : null;
+                if (direct != null) { hold.sprite = direct; hold.color = Color.white; hold.type = Image.Type.Simple; hold.preserveAspect = true; }
+                else if (look != null && look[2].Length == 0) Thumbs.ShowSig(hold, look[3], null);
+                Ui.Label(back.transform, look == null ? T("本体", "Base") : Labels.Of(variant) + " · " + Workshop.SourceLabel(look[1]), 4f, imageH + 8f, cellW - 8f, 18f, 12f, chosen ? Skin.Cream : Skin.Text, TextAlignmentOptions.Center);
+                if (look != null && chosen) Ui.Label(back.transform, T("正在编辑这个差分", "editing this variant"), 4f, imageH + 26f, cellW - 8f, 14f, 10f, Skin.Note, TextAlignmentOptions.Center);
+                Ui.Clickable(back, () => { pickedVariant = variant; addAt = 0; Build(); });
+            }
+            if (looks.Count == 0) Ui.Label(c, T("这种道具还没有差分。", "No variants yet."), 0f, 34f + cellH + 12f, LeftW, 24f, 13f, Skin.Note, TextAlignmentOptions.Center);
+            const float rowY = 388f, pagerW = 64f, pagerMid = 110f;
+            Ui.Button(c, T("返回", "Back"), 0f, rowY, 96f, 32f, () => { picked = null; pickedVariant = null; Build(); }, false, 16f);
+            if (pages > 1)
+            {
+                float px = (LeftW - pagerW * 2f - pagerMid) / 2f;
+                if (groupPage > 0) Ui.Button(c, "<", px, rowY, pagerW, 32f, () => { groupPage--; Build(); });
+                Ui.Label(c, (groupPage + 1) + " / " + pages, px + pagerW, rowY, pagerMid, 32f, 16f, Skin.Cream, TextAlignmentOptions.Center);
+                if (groupPage < pages - 1) Ui.Button(c, ">", px + pagerW + pagerMid, rowY, pagerW, 32f, () => { groupPage++; Build(); });
+            }
+        }
 
         // ClaudeNote: 0.9.7 立绘的组（Lune 2026-11-18）：选了立绘之后左边整块显示——同一个 root_key 在各来源里的图（不同来源自动并入同一组，
         //   同来源的第 2、3… 张也在）、现在选中来源的差分、归进这个组的其它立绘。都是整张原图的小样。黄底 = 现在来客用的那个来源。
@@ -714,11 +794,17 @@ namespace ProbablyExtendFramework
                 Image back = Ui.Box(c, slot % GroupColumns * (cellW + gap), 34f + slot / GroupColumns * (cellH + 6f), cellW, cellH, current ? Skin.PanelOn : Skin.Panel, Color.white);
                 Image hold = Ui.Box(back.transform, 4f, 4f, cellW - 8f, imageH, Skin.White, Skin.Line);
                 Thumbs.Show(hold, key, variant, () => Painter.PreviewCached(Painter.PortraitGroup, key, 4, variant, showing));
-                Ui.Label(back.transform, cells[i].Value, 4f, imageH + 8f, cellW - 8f, 18f, 12f, current ? Skin.Cream : Skin.Text, TextAlignmentOptions.Center);
+                bool chosen = variant != null ? variant == pickedVariant : pickedVariant == null && current;
+                if (chosen && !current) back.sprite = Skin.PanelOn;
+                Ui.Label(back.transform, cells[i].Value, 4f, imageH + 8f, cellW - 8f, 18f, 12f, current || chosen ? Skin.Cream : Skin.Text, TextAlignmentOptions.Center);
                 if (current) Ui.Label(back.transform, T("来客现在用这张", "shown to visitors"), 4f, imageH + 26f, cellW - 8f, 14f, 10f, Skin.Note, TextAlignmentOptions.Center);
+                else if (variant != null && variant == pickedVariant) Ui.Label(back.transform, T("正在编辑这个差分", "editing this variant"), 4f, imageH + 26f, cellW - 8f, 14f, 10f, Skin.Note, TextAlignmentOptions.Center);
+                // ClaudeNote: 1.0.0 rc6 差分格子可以点：右栏换成这个差分（加标签、设判断条件）；点本体格子回到整张立绘
+                string pickVariant = variant;   // 标签按“图ID#差分”记，不分来源：哪个来源的同名差分点了都是它
+                Ui.Clickable(back, () => { pickedVariant = pickVariant; addAt = 0; Build(); });
             }
             const float rowY = 388f, pagerW = 64f, pagerMid = 110f;
-            Ui.Button(c, T("返回", "Back"), 0f, rowY, 96f, 32f, () => { picked = null; rootTyping = null; Build(); }, false, 16f);
+            Ui.Button(c, T("返回", "Back"), 0f, rowY, 96f, 32f, () => { picked = null; pickedVariant = null; rootTyping = null; Build(); }, false, 16f);
             if (pages > 1)
             {
                 float px = (LeftW - pagerW * 2f - pagerMid) / 2f;

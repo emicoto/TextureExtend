@@ -26,6 +26,9 @@ namespace ProbablyExtendFramework
         //   由伴生 mod（有文件权限）把 DLL 当文件读出那一段交过来（Painter.UseImageReader）。伴生 mod 没装 / 没启用时这类图读不到。
         internal static string ExtSig(string modId, string resource) { return "ext|" + modId + "|" + VersionOf(modId) + "|" + resource; }
         internal static Func<string, string, byte[]> Reader;   // (模组ID, 资源名) → PNG 字节
+        // ClaudeNote: 1.0.0 rc6 第四种：data|本框架ID|记号|相对路径 —— 本框架 ModData 文件夹里的图片（本地图片 Local/…）。
+        //   ModData 是游戏给每个 mod 的读写位置，读自己的不需要任何权限；列目录才要（由伴生 mod 列，见 Core/LocalImages.cs）。
+        internal static string DataSig(string relativePath, string stamp) { return "data|" + Painter.ModId + "|" + (stamp ?? "").Replace('|', '_') + "|" + relativePath; }
 
         private static string VersionOf(string modId)
         {
@@ -44,6 +47,7 @@ namespace ProbablyExtendFramework
                 if (!listed && !PackShelf.CanRead(p[1])) return null;   // 启用中的 mod，或架子上的包
                 bytes = ModHelper.ReadModFileBytes(p[1], p[3]);
             }
+            else if (p[0] == "data") bytes = ModHelper.ReadModDataFileBytes(Painter.ModId, p[3]);
             else if (p[0] == "ext")
             {
                 if (Reader == null || (!listed && !PackShelf.CanRead(p[1]))) return null;
@@ -73,8 +77,9 @@ namespace ProbablyExtendFramework
             {
                 byte[] bytes = Bytes(sig);
                 if (bytes == null) return null;
-                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-                if (!tex.LoadImage(bytes, false)) { UnityEngine.Object.Destroy(tex); return null; }   // 保持可读：取景直接读像素，省一次 GPU 回读
+                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, true);   // 1.0.0 带多级纹理：大图先在显卡上缩小再读（SourceReader.Shrink），有它缩出来才不锯齿
+                if (!tex.LoadImage(bytes, false)) { UnityEngine.Object.Destroy(tex); return null; }   // 保持可读：小图取景直接读像素，省一次 GPU 回读
+                tex.filterMode = FilterMode.Trilinear;
                 tex.name = sig;
                 tex.wrapMode = TextureWrapMode.Clamp;
                 lastKey = sig;

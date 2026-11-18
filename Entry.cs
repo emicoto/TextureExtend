@@ -35,6 +35,8 @@ namespace ProbablyExtendFramework
             // ClaudeNote: 0.6.0 游戏接触面：各模块登记自己的补丁 / 读数接口，然后逐个安装（装不上的只停那一项功能）
             PlanPort.Install();
             PortraitPools.Install();
+            Counter.Install();
+            ConfigNumbers.Install();
             DialogPlacement.Install();
             PickButtonHooks.Install();
             Ports.InstallAll();
@@ -48,12 +50,16 @@ namespace ProbablyExtendFramework
             ModHook.OnGameLoadedLate += Painter.RestoreAll;
             ModHook.OnGoingSleepEarly += OnSleep;
             // ClaudeNote: 动态差分的统一重算点（不逐帧）：读档后、起床后、开门后、关门后。来客到来 / 离开由 Baker 每秒看一眼当前来客有没有换人。
-            ModHook.OnGameLoadedLate += Painter.RefreshAll;
-            ModHook.OnWakingUpLate += Painter.RefreshAll;
-            ModHook.OnShutterOpenedLate += Painter.RefreshAll;
-            ModHook.OnShutterClosedLate += Painter.RefreshAll;
+            // ClaudeNote: 1.0.0 rc6 检测点（Lune 2026-11-18 定）：道具 = 读档、开店、关店、入睡结算（起床那次挪到这里：黑屏里做，起床就是结果）。
+            //   整店（含容器套容器）只在读档和入睡结算时走一遍，顺手记下“受管清单”；开店、关店、起床（临时状态到期）只过清单。
+            //   都挂在“晚”那一档：别的 mod 在同一时刻、“早”档里写的存档位，这里读得到。
+            ModHook.OnGameLoadedLate += OnLoaded;
+            ModHook.OnGoingSleepLate += OnSleepLate;
+            ModHook.OnWakingUpLate += OnWake;
+            ModHook.OnShutterOpenedLate += OnOpen;
+            ModHook.OnShutterClosedLate += OnClose;
             ModHook.OnGameLoadedLate += RecheckAfterLoad;
-            ModHook.OnGameLoadedLate += Baker.RequestBurst;   // 1.0.0 集中预处理：读档后一次、入睡时一次
+            ModHook.OnGameLoadedLate += Baker.RequestLoadBurst;   // 1.0.0 集中预处理：读档后一次（rc9：活多时显示等待画面）、入睡时一次
             ModHook.OnGoingSleepEarly += Baker.RequestBurst;
             Baker.Launch();
         }
@@ -63,6 +69,7 @@ namespace ProbablyExtendFramework
             if (!enabled) return;
             enabled = false;
             ModHook.OnModAssetsLoaded -= OnAssetsLoaded;
+            Painter.ResetReady();
             ModHook.OnGameLoadedNormal -= OnSessionStart;
             ModHook.OnGameLoadedNormal -= Painter.Preload;
             ModHook.OnGameLoadedLate -= Painter.Settle;
@@ -70,12 +77,14 @@ namespace ProbablyExtendFramework
             ModHook.OnShutterOpenedLate -= Painter.Settle;
             ModHook.OnGameLoadedLate -= Painter.RestoreAll;
             ModHook.OnGoingSleepEarly -= OnSleep;
-            ModHook.OnGameLoadedLate -= Painter.RefreshAll;
-            ModHook.OnWakingUpLate -= Painter.RefreshAll;
-            ModHook.OnShutterOpenedLate -= Painter.RefreshAll;
-            ModHook.OnShutterClosedLate -= Painter.RefreshAll;
+            ModHook.OnGameLoadedLate -= OnLoaded;
+            ModHook.OnGoingSleepLate -= OnSleepLate;
+            ModHook.OnWakingUpLate -= OnWake;
+            ModHook.OnShutterOpenedLate -= OnOpen;
+            ModHook.OnShutterClosedLate -= OnClose;
+            Counter.Reset();
             ModHook.OnGameLoadedLate -= RecheckAfterLoad;
-            ModHook.OnGameLoadedLate -= Baker.RequestBurst;
+            ModHook.OnGameLoadedLate -= Baker.RequestLoadBurst;
             ModHook.OnGoingSleepEarly -= Baker.RequestBurst;
             // ClaudeNote: 0.6.1 自检：停用时把开着的窗口、挪过的对话框、调试开关一并收掉
             Notices.Reset();
@@ -96,7 +105,6 @@ namespace ProbablyExtendFramework
             PackShelf.Reset();
             BundledTables.Reset();
             Fit.Save();
-            Flags.Save();
             Display.Shutdown();
             DevPanel.Clear();   // ClaudeNote: 2026-11-16 调试项收进自己的面板，F9 只挂一个入口
             Health.Clear();
@@ -129,7 +137,7 @@ namespace ProbablyExtendFramework
                     () => Chinese ? "示范注册表：深空娘化" : "Demo registry: DeepSpace portraits",
                     new[] { "auto", "off" },
                     () => Chinese
-                        ? "自动：「深空娘化 · 人物美化内容包」启用着时，按框架附带的注册表读取它的立绘与情绪差分（图片仍在它自己的文件夹里，用到时才读）。关：不读。改动在下次进游戏时生效。没启用那个包、只想读它的图：到“立绘来源设置”窗口的只读立绘包里打开。"
+                        ? "自动：「深空娘化 · 人物美化内容包」启用着时，按框架附带的注册表读取它的立绘与情绪差分（图片仍在它自己的文件夹里，用到时才读）。关：不读。改动在下次进游戏时生效。没启用那个包、只想读它的图：到贴图扩展工坊的“来源一览”里激活它。"
                         : "Auto: when the DeepSpace portrait pack is enabled, register its portraits and emotion states from the bundled table. Takes effect on next launch.");
                 // 不在游戏中途切换（中途重登记上千行、重建立绘库，Lune 实测会卡住点击）；下次启动生效
             }
@@ -301,6 +309,7 @@ namespace ProbablyExtendFramework
             Workshop.Apply();   // ClaudeNote: 0.7.0 工坊导出的注册表格（ModData 里）当作一个来源读进来
             Cache.LoadIndex();
             RegisterDebug();
+            Painter.FireReady();   // 1.0.0 rc9 告诉订阅了 Painter.OnReady 的 mod：可以登记了
             Info("ready · " + Cache.Count + " cached image(s)");
         }
 
@@ -368,10 +377,43 @@ namespace ProbablyExtendFramework
             Painter.Retired = false;   // 新读的档：照常工作（卸载前清理只管做清理的那一局）
         }
 
+        private static void Guard(string what, Action run)
+        {
+            try { run(); }
+            catch (Exception ex) { Health.Report(what, ex); }
+        }
+
+        private static void OnLoaded()
+        {
+            Guard("checkpoint load", () =>
+            {
+                Wants.Reload();
+                Wants.TimeFromStore();
+                Counter.Reset();
+                LocalImages.Scan();   // 每次读档重扫本地图片（只列文件、比记号）
+                ItemArt.Discover();   // 启用中的 mod 贴图表里按“道具ID_差分名”命名的图：自动进道具贴图组
+                Painter.RefreshAll();
+            });
+        }
+
+        private static void OnSleepLate()
+        {
+            Guard("checkpoint sleep", () =>
+            {
+                Wants.Expire(Wants.UntilSleep);
+                Wants.Reload();
+                Wants.SetTime(Wants.WakeUp);
+                Painter.RefreshAll();
+            });
+        }
+
+        private static void OnWake() { Guard("checkpoint wake", () => { Wants.Reload(); Wants.SetTime(Wants.WakeUp); Painter.RefreshManaged(); }); }
+        private static void OnOpen() { Guard("checkpoint open", () => { Wants.Reload(); Wants.SetTime(Wants.OpenShop); Painter.RefreshManaged(); }); }
+        private static void OnClose() { Guard("checkpoint close", () => { Wants.Reload(); Wants.SetTime(Wants.EndShop); Painter.RefreshManaged(); }); }
+
         private static void OnSleep()
         {
             Fit.Save();
-            Flags.Save();
             Painter.PruneUsed();
             Cache.SaveIndex();
         }

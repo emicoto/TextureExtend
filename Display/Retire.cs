@@ -1,6 +1,6 @@
 // ClaudeNote: 0.6.2 卸载前清理（Lune 2026-11-16：让玩家停用前到调试面板执行一下，再扒掉模组）。
 //   为什么需要：框架在存档里的物品身上留了东西——画上去的图指向本 mod 的贴图、切过状态的静态道具换成了差分图、
-//   还有一批 TEXEXT_* 标签。直接删掉 mod，这些物品的图就找不到了（缺图 / 空白）。
+//   还有一批 PEF_* 标签。直接删掉 mod，这些物品的图就找不到了（缺图 / 空白）。
 //   清理做什么：
 //     · 接管来的道具（别的 mod 的立绘道具，如 lewd_meme 少女）→ 还原成接管前的原图与占格
 //     · 经框架画图的道具（别的 mod 调 Painter.Paint 的，如 BroodMeme 宿主）→ 还原成第一次画之前的图与占格（物品标签 textureOG）
@@ -64,7 +64,7 @@ namespace ProbablyExtendFramework
                         }
                         else kept++;
                     }
-                    foreach (string tag in new[] { PaintRules.LockTag, Pulses.ItemTag, LewdMemeCompat.MoodTag })
+                    foreach (string tag in new[] { PaintRules.LockTag, PaintRules.AutoTag, Pulses.ItemTag, LewdMemeCompat.MoodTag })
                         if (item.IsTag(tag)) { item.ModifyTag(tag, s => s.Disable()); tags++; }
                 }
                 catch (Exception ex) { OneBadItem(item, ex); }

@@ -5,7 +5,7 @@
 //            同 ID 贴图：这个图 ID 在各个来源里的全部图（来源:图ID~编号）+“自动”。一般道具默认看这个——换的是“用谁画的这张”。
 //            其他更多：  整个图库（第一行 来源筛选 + 标签组筛选；第二行 搜索 + 翻页），换的是“换成哪个角色”。
 //            动态贴图道具（[DynamicTexture]，如 lewd_meme 少女：图是生成时才定的）默认直接看整个图库。右上角的按钮在两种之间切。
-//   亲手选了状态 → 物品加锁（TEXEXT_LOCK），规则不再动它；选“自动”解锁并立刻按规则重算。换立绘不加锁（规则照样管新立绘的状态）。
+//   亲手选了状态 → 物品加锁（PEF_LOCK），规则不再动它；选“自动”解锁并立刻按规则重算。换立绘不加锁（规则照样管新立绘的状态）。
 //   选择结果写在物品自己的标签里，随存档走。禁止手动切换的目标不出“选图”按钮（Picker.HasOptions）。
 //   缩略图就是道具成品图（Painter.Get）：缓存里有的直接读；没画过的高清图第一次翻到那一页时现画（每张几十毫秒），所以每页只放 24 张。
 using System;
@@ -151,7 +151,7 @@ namespace ProbablyExtendFramework
                     ModHelper.Delay(Painter.ModId, 0.1f, Build);   // 立绘库重选之后再重排
                 });
                 ui.Last?.SetFixedWidth(Mathf.Max(120f, width - 110f));
-                ui.AddButton(T("来源设置", "Sources"), SourceWindow.Open);
+                ui.AddButton(T("来源设置", "Sources"), WorkshopWindow.Open);   // 1.0.0 rc6 改成打开工坊的“来源一览”（旧的来源设置窗口只留在调试面板）
                 ui.End();
             }
             ui.BeginScroll(height - 76f);

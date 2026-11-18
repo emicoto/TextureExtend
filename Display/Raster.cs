@@ -20,13 +20,13 @@ namespace ProbablyExtendFramework
         internal const int HeadRoom = 2;          // 原像素裁切：头顶上方留几行空
 
         /// <summary>取景并重采样。size = 输出的边长（≤ target）。立绘完全透明时返回 null。pixelArt = 输出该用点采样。</summary>
-        internal static Color32[] Frame(Color32[] src, int texW, int texH, RectInt rect, int target, out int size, out bool pixelArt)
+        internal static Color32[] Frame(Color32[] src, int texW, int texH, RectInt rect, int target, out int size, out bool pixelArt, bool mayBePixelArt = true)
         {
             pixelArt = true; size = 0;
             rect.ClampToBounds(new RectInt(0, 0, texW, texH));
             if (src == null || rect.width <= 0 || rect.height <= 0 || !Bounds(src, texW, rect, out RectInt box)) return null;
 
-            pixelArt = box.width <= PixelArtMax;
+            pixelArt = mayBePixelArt && box.width <= PixelArtMax;   // 1.0.0 缩小过的大图不按像素图处理（见 SourceReader.WasShrunk）
             if (pixelArt)
             {
                 size = NativeWindow / Mathf.Max(1, NativeWindow / box.width);   // 128；外框宽 ≤ 64 时 64，以此类推

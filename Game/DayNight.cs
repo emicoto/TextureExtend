@@ -17,6 +17,7 @@ namespace ProbablyExtendFramework
         {
             ModHook.OnShutterClosedLate += ToNight;
             ModHook.OnWakingUpLate += ToDay;
+            ModHook.OnGoingSleepLate += ToDay;   // 1.0.0 rc6 起床那次重算挪到了入睡结算时做：那一刻起就算白天
             ModHook.OnGameLoadedInit += ToDay;
             Painter.For(Owner, PaintTarget.Portrait, "*").Tag(NightTag).Only(HasNightPortrait).When(_ => night).Weight(-10);
             Painter.For(Owner, PaintTarget.StaticItem, "*").Tag(NightTag).Only(i => PaintRules.HasItemVariant(i?.identifier, NightTag)).When(_ => night).Weight(-10);
@@ -26,6 +27,7 @@ namespace ProbablyExtendFramework
         {
             ModHook.OnShutterClosedLate -= ToNight;
             ModHook.OnWakingUpLate -= ToDay;
+            ModHook.OnGoingSleepLate -= ToDay;
             ModHook.OnGameLoadedInit -= ToDay;
             Painter.RemoveRules(Owner);
         }

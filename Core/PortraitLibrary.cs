@@ -179,6 +179,26 @@ namespace ProbablyExtendFramework
             Add(r);
         }
 
+        /// <summary>登记一张打包在【启用中】的 mod 自己 DLL 里的图片（1.0.0 rc9：json / 表格里写 res:资源名）。</summary>
+        internal static void RegisterResource(string sourceId, string id, string modId, string resource, string variant, params string[] tags)
+        {
+            Registration r = FileRegistration(sourceId, id, modId, resource, variant, tags ?? Array.Empty<string>());
+            if (r == null) return;
+            string sig = r.fileSig = ExternalImages.ResourceSig(modId, resource);
+            r.sprite = () => ExternalImages.Get(sig);
+            Add(r);
+        }
+
+        /// <summary>登记一张本框架 ModData 文件夹里的图片（本地图片；1.0.0 rc6）。</summary>
+        internal static void RegisterDataFile(string sourceId, string id, string relativePath, string variant, string stamp, params string[] tags)
+        {
+            Registration r = FileRegistration(sourceId, id, Painter.ModId, relativePath, variant, tags);
+            if (r == null) return;
+            string sig = r.fileSig = ExternalImages.DataSig(relativePath, stamp);
+            r.sprite = () => ExternalImages.Get(sig);
+            Add(r);
+        }
+
         /// <summary>造一条“磁盘图片”登记，不加进全局表（外部立绘包兼容层在重建时整批交进来）。差分会顺带声明状态标签。</summary>
         internal static Registration FileRegistration(string sourceId, string id, string modId, string relativePath, string variant, string[] tags)
         {
@@ -878,7 +898,9 @@ namespace ProbablyExtendFramework
             }
             foreach (Registration r in list)
             {
-                if (r.variant == null || !work.TryGetValue(r.id, out Portrait p)) continue;
+                if (r.variant == null) continue;
+                // ClaudeNote: 1.0.0 rc6 差分挂不上本体（没人登记过这个 ID 的本体图）：之前静默丢掉（Lune 的 Clara_story 系列没有 Clara_story.png 时五张全没了，日志里一个字没有）
+                if (!work.TryGetValue(r.id, out Portrait p)) { Health.Report("variant without a base image", r.source + ": " + r.id + "#" + r.variant + " — register a base image for \"" + r.id + "\" (a file named exactly " + r.id + ".png, or a portrait row)"); continue; }
                 if (r.frame == Display.Usage.FullBody) { Variant(p, r.source, r.variant, r.sprite, r.fileSig); continue; }
                 // 专用取景图：归到同一来源；那个来源没有本体时算共享
                 Candidate c = p.CandidateOf(r.source);

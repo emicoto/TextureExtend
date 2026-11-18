@@ -35,6 +35,7 @@ namespace ProbablyExtendFramework
             if (host != null) Destroy(host);
             host = null;
             Busy = false;
+            PrepareScreen.Hide();
         }
 
         /// <summary>下一次扫描做集中预处理（读档后、入睡时置上）。</summary>
@@ -42,6 +43,10 @@ namespace ProbablyExtendFramework
 
         /// <summary>读档后 / 入睡时调：安排一次集中预处理。</summary>
         internal static void RequestBurst() { Burst = true; Painter.NeedScan = true; }
+
+        // ClaudeNote: 1.0.0 rc9 读档后的那次：活多时显示“正在准备贴图”画面（UI/PrepareScreen.cs）。入睡那次不显示（有过夜淡出）
+        private static bool loadBurst;
+        internal static void RequestLoadBurst() { loadBurst = true; RequestBurst(); }
 
         /// <summary>开 / 关贴图扩展工坊的键（设置里可改，见 Entry.DefineConfig）。</summary>
         internal static KeyCode Hotkey = KeyCode.PageUp;
@@ -123,6 +128,7 @@ namespace ProbablyExtendFramework
             if (ReferenceEquals(now, seenClient)) return;
             seenClient = now;
             Display.Sweep();   // 柜台换了人：上一位用着、当时不能销毁的旧显示图现在可以放了
+            Counter.ClientChanged(now != null);
             float t = Health.Now;
             Checkpoint.Fire(Checkpoint.Visit);
             Painter.RefreshPortraitItems();
@@ -141,8 +147,10 @@ namespace ProbablyExtendFramework
             // ClaudeNote: 1.0.0 集中预处理（Lune 2026-11-18）：读档后、入睡时各一次，把“每个立绘键现在选中的那张（激活来源的、逐张点名的候选）+ 存档里道具正用着的”
             //   里还没画过的外部图片一口气画完——Painter.AllIds 列的正是这些。这一遍一帧一张不歇（首次可能十几秒，之后有缓存就是空跑）。
             //   其余时候触发的扫描（换来源、开关包…）不画外部图片，用到才画。
-            bool burst = Burst;
+            bool burst = Burst, screen = burst && loadBurst;
             Burst = false;
+            loadBurst = false;
+            int done = 0;
             float burstStart = Time.realtimeSinceStartup;
             int baked = 0;
             bool whole = ids.Count > 0;   // 这一遍有没有完整走完（中途离开店面 = 没有）
@@ -154,12 +162,16 @@ namespace ProbablyExtendFramework
                 try { worked = Painter.Prebake(id, burst); }
                 catch (System.Exception ex) { Health.Report("prebake", id.Text + ": " + ex.GetType().Name + ": " + ex.Message); }
                 if (worked) baked++;
+                done++;
+                if (screen && !PrepareScreen.Showing && Time.realtimeSinceStartup - burstStart > PrepareScreen.ShowAfter && done < ids.Count) PrepareScreen.Show();
                 float spent = Time.realtimeSinceStartup - frameStart;
-                if (spent < FrameBudget) continue;
+                if (spent < (PrepareScreen.Showing ? PrepareScreen.FrameBudget : FrameBudget)) continue;
+                PrepareScreen.Progress(done, ids.Count);
                 if (spent > FrameBudget * 5f) { Step("release pixels", SourceReader.Release); yield return burst ? null : rest; }   // 集中预处理：一帧一张，不歇
                 else yield return null;
                 frameStart = Time.realtimeSinceStartup;
             }
+            PrepareScreen.Hide();
             // ClaudeNote: 0.6.0 立绘大小自适配的补量：每个来源还没量够的补几张（同样分帧，量够就不再做）
             var jobs = new List<KeyValuePair<string, string>>();
             Step("fit pending", () => jobs = Fit.Pending());

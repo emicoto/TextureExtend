@@ -47,6 +47,14 @@ namespace ProbablyExtendFramework
             if (id == null || id == Painter.ModId || !mod.IsEnabled || !autoLoaded.Add(id)) return;
             try { if (ModHelper.ModFileExists(id, AutoFile)) File(id, AutoFile, id); }
             catch (Exception ex) { Entry.Warn(id + "/" + AutoFile + " not loaded: " + ex.Message); }
+            // ClaudeNote: 1.0.0 rc9 json 注册文件（Core/PackJson.cs）：启用中的 mod 也读，和 csv 两份都读
+            try
+            {
+                if (!ModHelper.ModFileExists(id, PackJson.File)) return;
+                int n = PackJson.Apply(id, id, ModHelper.ReadModFileText(id, PackJson.File));
+                Entry.Info(id + "/" + PackJson.File + ": " + n + " row(s) registered");
+            }
+            catch (Exception ex) { Entry.Warn(id + "/" + PackJson.File + " not loaded: " + ex.Message); }
         }
 
         internal static void Reset() { autoLoaded.Clear(); }
@@ -130,6 +138,7 @@ namespace ProbablyExtendFramework
                     if (!FrameColumn(r["frame"], out Display.Usage frame)) return false;
                     if (frame != Display.Usage.FullBody) return sprite.Length > 0 && RegisterFrame(owner, spriteMod, id, null, sprite, frame);
                     if (sprite.Length > 0) RegisterPortrait(owner, spriteMod, id, null, sprite, tags);
+                    if (r["scale"].Length > 0) Packs.ImageScale(owner, id, r["scale"]);   // 1.0.0 rc9 单张图的显示大小（不写 = 按包 / 自动）
                     else if (tags.Length > 0) PortraitLibrary.AddTags(owner, id, tags);
                     else if (dialog == null) return false;
                     if (dialog != null) DialogPlacement.SetFor(owner, id, dialog);
@@ -143,8 +152,16 @@ namespace ProbablyExtendFramework
                     if (!FrameColumn(r["frame"], out Display.Usage frame)) return false;
                     if (frame != Display.Usage.FullBody) return target == PaintTarget.Portrait && RegisterFrame(owner, spriteMod, id, tag, sprite, frame);
                     if (target == PaintTarget.Portrait) RegisterPortrait(owner, spriteMod, id, tag, sprite, null);
+                    else if (IsResource(sprite)) ItemArt.AddFile(owner, id, tag, ExternalImages.ResourceSig(spriteMod, sprite.Substring(ResPrefix.Length)));
                     else if (!IsExternal(sprite)) PaintRules.AddItemVariant(owner, id, tag, spriteMod, sprite);
-                    else return false;   // 道具的图只能是 mod 自己贴图表里的
+                    else
+                    {
+                        // ClaudeNote: 1.0.0 rc6 道具差分也可以是外部图片（模组ID:相对路径）——没启用的包、本地图片都能给道具加差分（Core/ItemArt.cs）
+                        int colon = sprite.IndexOf(':');
+                        ItemArt.AddFile(owner, id, tag, ExternalImages.FileSig(sprite.Substring(0, colon), sprite.Substring(colon + 1)));
+                    }
+                    string[] own = Words(r["tags"], ' ');   // 这个差分自己的标签（本体的标签写在 portrait / tag 行）
+                    if (own.Length > 0) VariantTags.Add(owner, target, id, tag, own);
                     if (noManual) PaintRules.DenyManual(owner, target, id);
                     return true;
                 }
@@ -191,6 +208,14 @@ namespace ProbablyExtendFramework
                     string group = r["group"];
                     if (!Target(r["target"], out PaintTarget target)) return false;
                     // ClaudeNote: 0.7.0 tag 行也认 manual=no（工坊导出用：只禁手动选图、不登记贴图的目标没有别的行可写）。只对点名的 id 生效
+                    // ClaudeNote: 1.0.0 rc6 id 写成 图ID#差分 = 给这个差分自己加标签（工坊里点选差分后加的标签导出成这样）
+                    int hashAt = id.IndexOf('#');
+                    if (hashAt > 0 && hashAt < id.Length - 1)
+                    {
+                        if (group.Length == 0) return false;
+                        VariantTags.Add(owner, target, id.Substring(0, hashAt), id.Substring(hashAt + 1), group);
+                        return true;
+                    }
                     bool deny = noManual && id.Length > 0 && id != "*";
                     if (deny) PaintRules.DenyManual(owner, target, id);
                     if (group.Length == 0) return deny;
@@ -259,6 +284,7 @@ namespace ProbablyExtendFramework
 
         private static void RegisterPortrait(string owner, string spriteMod, string id, string variant, string sprite, string[] tags)
         {
+            if (IsResource(sprite)) { PortraitLibrary.RegisterResource(owner, id, spriteMod, sprite.Substring(ResPrefix.Length), variant, tags ?? Array.Empty<string>()); return; }
             if (IsExternal(sprite))
             {
                 int colon = sprite.IndexOf(':');
@@ -290,6 +316,10 @@ namespace ProbablyExtendFramework
             PortraitLibrary.RegisterFrame(owner, id, frame, () => SpriteOf(spriteMod, key), variant);
             return true;
         }
+
+        // ClaudeNote: 1.0.0 rc9 res:资源名 = 打包在这个 mod 自己 DLL 里的图片（只对启用中的 mod；没启用的 DLL 包由伴生 mod 代读）
+        internal const string ResPrefix = "res:";
+        private static bool IsResource(string sprite) { return sprite.StartsWith(ResPrefix, StringComparison.Ordinal) && sprite.Length > ResPrefix.Length; }
 
         // 模组ID:路径——冒号前不能是单个字母（排除 E:\ 这种绝对路径），冒号后要像文件
         private static bool IsExternal(string sprite)
@@ -424,6 +454,22 @@ namespace ProbablyExtendFramework
             p.Pixel = string.Equals((style ?? "").Trim(), "pixel", StringComparison.OrdinalIgnoreCase);
         }
 
+        // ClaudeNote: 1.0.0 rc9 单张图的显示大小（Lune：json 里每张图可以写 scale）。先于包的 scale 和自动适配。
+        private static readonly Dictionary<string, float> imageScales = new Dictionary<string, float>();
+
+        internal static void ImageScale(string owner, string id, string text)
+        {
+            string sc = (text ?? "").Trim().ToLowerInvariant().TrimEnd('x');
+            if (float.TryParse(sc, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float f))
+                imageScales[owner + "|" + id] = Mathf.Clamp(f, 0.25f, 4f);
+        }
+
+        /// <summary>这个来源给这张图写的显示大小；没写返回 null。</summary>
+        public static float? ImageScaleOf(string owner, string id)
+        {
+            return owner != null && id != null && imageScales.TryGetValue(owner + "|" + id, out float f) ? f : (float?)null;
+        }
+
         /// <summary>作者在 pack 行写的描绘大小；没写返回 null（由 Fit 自动适配）。</summary>
         public static float? AuthoredScale(string owner)
         {
@@ -448,6 +494,7 @@ namespace ProbablyExtendFramework
         public static void Remove(string owner)
         {
             foreach (string key in new List<string>(packs.Keys)) if (packs[key].Owner == owner) packs.Remove(key);
+            foreach (string key in new List<string>(imageScales.Keys)) if (key.StartsWith(owner + "|", StringComparison.Ordinal)) imageScales.Remove(key);
         }
     }
 }

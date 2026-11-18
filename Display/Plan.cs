@@ -39,20 +39,20 @@ namespace ProbablyExtendFramework
             plan.TableOwner = Originals.OwnerOfCurrent(key);
             if (p.Source == plan.TableOwner) { plan.Mode = p.Source == PortraitLibrary.GameSource ? PlanMode.Vanilla : PlanMode.Yield; return plan; }
             if (p.Source == PortraitLibrary.GameSource) { plan.Mode = PlanMode.Original; return plan; }
-            return Framework(plan, p.Source);
+            return Framework(plan, p.Source, key);
         }
 
         /// <summary>框架直接显示某张立绘（Display.Get / ShowOnCounter：调用方点名要这张，不存在让出）。</summary>
         public static Plan ForPortrait(string portraitId)
         {
             var plan = new Plan { Mode = PlanMode.Framework, Scale = 1f, Source = PortraitLibrary.SourceOf(portraitId) };
-            return Framework(plan, plan.Source);
+            return Framework(plan, plan.Source, portraitId);
         }
 
-        private static Plan Framework(Plan plan, string source)
+        private static Plan Framework(Plan plan, string source, string portraitId)
         {
             plan.Mode = PlanMode.Framework;
-            plan.Scale = Fit.ScaleOf(source);
+            plan.Scale = Packs.ImageScaleOf(source, portraitId) ?? Fit.ScaleOf(source);   // 1.0.0 rc9 单张图写了大小就用它
             plan.Pixel = Packs.PixelOf(source);
             return plan;
         }
@@ -114,7 +114,8 @@ namespace ProbablyExtendFramework
                 // ClaudeNote: 0.9.12 立绘池里追加的新立绘（Core/PortraitPools.cs）：键不在游戏立绘表里，原版会报“找不到”并退回随机拾荒者。认出来就现取。
                 if (Enabled && __instance != null && __instance.spriteDictionary != null && !__instance.spriteDictionary.ContainsKey(key) && PortraitPools.IsExtra(key))
                 {
-                    Sprite extra = Display.Get(key);
+                    string extraState = Counter.StateFor(key);   // 1.0.0 rc6 自定义 NPC 也按意向 / 规则 / 来客事件定差分
+                    Sprite extra = (extraState != null ? Display.Get(key, extraState) : null) ?? Display.Get(key);
                     if (extra == null) return true;
                     __result = extra;
                     return false;
@@ -140,6 +141,12 @@ namespace ProbablyExtendFramework
                 string joined = RootJoin.StateFor(key);
                 if (joined == RootJoin.Vanilla) { Sprite og = Originals.Get(key); if (og != null) __result = og; return; }
                 Sprite s = joined != null ? Display.Get(key, joined) : null;
+                if (s == null)
+                {
+                    // ClaudeNote: 1.0.0 rc6 这个键现在该用哪个差分（意向 > 规则 > 来客事件，见 Display/Counter.cs）
+                    string state = Counter.StateFor(key);
+                    if (state != null) s = Display.Get(key, state);
+                }
                 if (s == null)
                 {
                     Plan plan = Plan.ForKey(key);

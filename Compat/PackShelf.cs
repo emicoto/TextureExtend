@@ -353,7 +353,15 @@ namespace ProbablyExtendFramework
             {
                 try
                 {
-                    JObject root = JObject.Parse(ModHelper.ReadModFileText(id, JsonFile) ?? "{}");
+                    string text = ModHelper.ReadModFileText(id, JsonFile) ?? "{}";
+                    JObject root = JObject.Parse(text);
+                    // ClaudeNote: 1.0.0 rc9 完整登记的写法（portraits / items / tags…）：整份交给 PackJson，包声明也在里面
+                    if (PackJson.HasBody(root))
+                    {
+                        if (root["name"] == null) root["name"] = name;
+                        int done = PackJson.Apply(id, id, root.ToString(), JsonFile);
+                        return Math.Max(done, 1);
+                    }
                     name = (string)root["name"] ?? name;
                     JToken pr = root["priority"];   // 数字，或 "top" / "top 10"
                     priority = pr == null ? 0 : pr.Type == JTokenType.Integer ? (int)pr : Packs.ParsePriority((string)pr, out top);

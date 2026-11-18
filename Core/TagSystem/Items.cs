@@ -5,7 +5,7 @@
 //     [Extend]   框架内置的道具扩展标签（WATERING、GROWING、COLORABLE、DYNAMICTEXTURE = 动态贴图道具），mod 可用 Regist.Library 追加
 //   “动态导入”：游戏没有静态的道具定义表，分类和标识标签都写在每种道具的工厂函数里，所以读到哪种道具就导入它带的词。
 //     读法见 Game/ItemDefs.cs（照道具定义读，每种道具只读一次）。
-//     不从店里的真物品上读：真物品身上还挂着运行时状态（TEXEXT_CUR、好感度…），那些不是道具“自带”的标签。
+//     不从店里的真物品上读：真物品身上还挂着运行时状态（PEF_CUR、好感度…），那些不是道具“自带”的标签。
 //   比较一律不分大小写（库里按游戏原样存大写，标签层里统一小写）。
 using System;
 using System.Collections.Generic;

@@ -2,7 +2,7 @@
 //   检查点：框架统一重算、或临时状态到期的时间点。内置 load（读档）、wake（起床）、open（开门）、close（关门）、sleep（入睡）、visit（来客换人）；
 //     mod 可以 Checkpoint.Register("brood.feed") 自建，再在合适的时候 Checkpoint.Fire("brood.feed")。
 //   临时状态：Painter.Pulse(modId, target, id).On("water").Tag("wet").Until("sleep") —— 有 mod 调 Painter.Fire("water", item) 时，
-//     这件物品切到 wet，直到 sleep 检查点到来。记在物品标签 TEXEXT_PULSE 里（随存档走）。
+//     这件物品切到 wet，直到 sleep 检查点到来。记在物品标签 PEF_PULSE 里（随存档走）。
 //   状态判定四层：临时 > 锁定（玩家亲手选的）> 规则 > 本体。临时状态到期后，锁定的物品回到玩家选的那个状态。
 using System;
 using System.Collections.Generic;
@@ -78,7 +78,7 @@ namespace ProbablyExtendFramework
             try
             {
                 Pulses.Expire(name);
-                if (name != Load && name != Wake && name != Open && name != Close && name != Visit) Painter.RefreshAll();   // 这几个框架本来就会重算（来客换人只重算立绘道具）
+                if (name != Load && name != Wake && name != Open && name != Close && name != Visit && name != Sleep) Painter.RefreshManaged();   // 这几个框架本来就会重算（来客换人只重算立绘道具；入睡在结算后整店过一遍）
             }
             catch (Exception ex) { Entry.Warn("checkpoint \"" + name + "\" failed: " + ex.Message); }
             Delegate[] listeners = OnFired?.GetInvocationList();
@@ -125,7 +125,8 @@ namespace ProbablyExtendFramework
     internal static class Pulses
     {
         /// <summary>物品身上正在进行的临时状态：状态>到期检查点;状态>到期检查点</summary>
-        internal const string ItemTag = "TEXEXT_PULSE";
+        // ClaudeNote: 1.0.0 存档标签前缀由 TEXEXT_ 改为 PEF_（发布前定名，不做旧存档迁移）。
+        internal const string ItemTag = "PEF_PULSE";
         /// <summary>临时状态的规则权重：压过所有普通规则。</summary>
         internal const int Weight = 1000000;
 

@@ -30,6 +30,15 @@ namespace ProbablyExtendFramework.WorkshopUi
         }
 
         /// <summary>窗口重摆：排着队的目标都要销毁了。</summary>
+        // ClaudeNote: 1.0.0 rc6 直接按身份串显示一张外部图片（道具贴图组里的外部差分：不在立绘库里，没有“来源:图ID”可查）
+        private const string SigMark = "sig\n";
+        internal static void ShowSig(Image target, string sig, Func<Sprite> fallback)
+        {
+            string id = SigMark + sig;
+            if (made.TryGetValue(id, out Sprite have)) { Put(target, have ?? fallback?.Invoke()); return; }
+            waiting.Add(new Job { id = id, target = target, fallback = fallback });
+        }
+
         internal static void Forget() { waiting.Clear(); }
 
         /// <summary>每帧调一次：最多真读一张。</summary>
@@ -77,10 +86,11 @@ namespace ProbablyExtendFramework.WorkshopUi
 
         private static Sprite Make(string id)
         {
-            int hash = id.LastIndexOf('#');
-            string key = id.Substring(0, hash), variant = id.Substring(hash + 1);
-            bool live = PortraitLibrary.Ready;
-            string sig = live ? PortraitLibrary.ImageSignature(key, variant) : Workshop.SigOf(key, variant);
+            bool raw = id.StartsWith(SigMark, StringComparison.Ordinal);
+            int hash = raw ? -1 : id.LastIndexOf('#');
+            string key = raw ? null : id.Substring(0, hash), variant = raw ? null : id.Substring(hash + 1);
+            bool live = !raw && PortraitLibrary.Ready;
+            string sig = raw ? id.Substring(SigMark.Length) : live ? PortraitLibrary.ImageSignature(key, variant) : Workshop.SigOf(key, variant);
             Texture2D small = null;
             if (sig != null)
             {

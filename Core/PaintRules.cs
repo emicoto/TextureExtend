@@ -86,7 +86,8 @@ namespace ProbablyExtendFramework
     internal static class PaintRules
     {
         /// <summary>静态道具切过图后，记下原图与当前状态：是否 mod 图|状态|图集或 mod|贴图键。随物品存档。</summary>
-        internal const string BaseTag = "TEXEXT_BASE";
+        // ClaudeNote: 1.0.0 存档标签前缀由 TEXEXT_ 改为 PEF_（发布前定名，不做旧存档迁移）。
+        internal const string BaseTag = "PEF_BASE";
 
         private static readonly List<PaintRule> rules = new List<PaintRule>();
         private static bool sorted = true;
@@ -172,7 +173,7 @@ namespace ProbablyExtendFramework
 
         // ── 手动锁定：玩家在选图里亲手选了某个差分，规则就不再动它，直到选回“自动” ──
 
-        internal const string LockTag = "TEXEXT_LOCK";
+        internal const string LockTag = "PEF_LOCK";
 
         internal static bool IsLocked(GameItem item) { return item != null && item.IsTag(LockTag); }
 
@@ -223,29 +224,26 @@ namespace ProbablyExtendFramework
             foreach (string key in new List<string>(manualDenied.Keys)) if (manualDenied[key] == owner) manualDenied.Remove(key);
             resolvers.RemoveAll(r => r.owner == owner);
             dynamics.RemoveAll(d => d.owner == owner);
-            foreach (string key in new List<string>(itemVariants.Keys)) if (itemVariants[key].owner == owner) itemVariants.Remove(key);
+            ItemArt.Remove(owner);
+            VariantTags.Remove(owner);
         }
 
-        // ── 静态道具的差分表（不带条件）：物品 ID + 状态 → 哪个 mod 的哪张图 ──
+        // ── 静态道具的差分：道具贴图组（Core/ItemArt.cs；1.0.0 rc6 起每个来源各存各的，不再后登记的盖掉先登记的） ──
 
-        private struct ItemVariant { internal string owner, mod, key; }
-        private static readonly Dictionary<string, ItemVariant> itemVariants = new Dictionary<string, ItemVariant>();
-        internal static int ItemVariantCount => itemVariants.Count;
+        internal static int ItemVariantCount => ItemArt.Count;
 
-        internal static bool HasItemVariant(string itemId, string tag) { return itemId != null && itemVariants.ContainsKey(itemId + "#" + tag); }
+        internal static bool HasItemVariant(string itemId, string tag) { return ItemArt.Pick(itemId, tag) != null; }
 
         internal static void AddItemVariant(string owner, string itemId, string tag, string spriteMod, string spriteKey)
         {
-            tag = PortraitLibrary.Normal(tag);
-            if (string.IsNullOrEmpty(itemId) || tag.Length == 0 || string.IsNullOrEmpty(spriteMod) || string.IsNullOrEmpty(spriteKey)) return;
-            itemVariants[itemId + "#" + tag] = new ItemVariant { owner = owner ?? "", mod = spriteMod, key = spriteKey };
+            ItemArt.Add(owner, itemId, tag, spriteMod, spriteKey);
         }
 
         /// <summary>登记过贴图扩展的道具 ID（差分、原版外观、指名的规则）。取道具池子用。</summary>
         internal static List<string> KnownItemIds()
         {
             var set = new HashSet<string>();
-            foreach (string key in itemVariants.Keys) { int hash = key.LastIndexOf('#'); if (hash > 0) set.Add(key.Substring(0, hash)); }
+            foreach (string id in ItemArt.Ids) set.Add(id);
             foreach (string key in nativeLooks.Keys) set.Add(key);
             foreach (PaintRule r in rules) if (r.target == PaintTarget.StaticItem && r.id.Length > 0 && r.id != "*" && r.id[0] != '@') set.Add(r.id);
             return new List<string>(set);
@@ -279,6 +277,14 @@ namespace ProbablyExtendFramework
         internal static void RefreshPortraitItem(GameItem item, PaintId now)
         {
             string portrait = ImageKey.IdOf(now.Key);   // 0.8.0 规则按图 ID 管，不分来源
+            // ClaudeNote: 1.0.0 rc6 别人点名要的标签（Wants）先于规则；临时状态（pulse）在时不看。对不上了由框架撤回本体（AutoTag）
+            Portrait known = PortraitLibrary.Get(portrait);
+            if (known != null && !Pulses.Any(item))
+            {
+                string want = VariantTags.Best(PaintTarget.Portrait, portrait, known.Variants, Wants.Of(PaintTarget.Portrait, portrait));
+                if (want != null && Painter.SetVariant(item, want)) { Auto(item, true); return; }
+                if (item.IsTag(AutoTag)) { Auto(item, false); Painter.SetVariant(item, null); }
+            }
             if (rules.Count == 0 || !Any(PaintTarget.Portrait, portrait, item)) return;   // 没有规则管它：手动 SetVariant 的结果不动
             bool held = false;
             foreach (PaintRule r in Holding(PaintTarget.Portrait, portrait, item))
@@ -303,8 +309,8 @@ namespace ProbablyExtendFramework
 
         // ── 接管别的 mod 的立绘道具：先记下它原来的图，规则都不成立时还原 ──
 
-        // ClaudeNote: 0.8.0 接管的记号并进 textureInfo（末尾的 |adopted），原图并进 textureOG —— 之前另有一个 TEXEXT_ORIG，
-        //   和“经框架画图的道具”的 TEXEXT_PREV 是同一件事记了两套。
+        // ClaudeNote: 0.8.0 接管的记号并进 textureInfo（末尾的 |adopted），原图并进 textureOG —— 之前另有一个 PEF_ORIG，
+        //   和“经框架画图的道具”的 PEF_PREV 是同一件事记了两套。
         internal static bool IsAdopted(GameItem item) { Painter.ReadInfo(item, out _, out _, out bool adopted); return adopted; }
 
         /// <summary>把别的 mod 的立绘道具接管过来画成指定状态（空 = 高清本体）。portraitId 可以只写图 ID（自动挑来源）或写明来源。</summary>
@@ -343,23 +349,58 @@ namespace ProbablyExtendFramework
 
         // ── 静态道具 ──
 
+        // ClaudeNote: 1.0.0 rc6 先后：别人点名要的标签（Wants）> 规则 > 时间段标签（openshop / endshop / wakeup）> 本体。
+        //   临时状态（pulse）是权重最高的规则，有它时不看意向。带着被排除标签的差分哪一层都不给。
+        //   AutoTag：这个状态是框架按标签自动给的（不是规则、不是别人手动设的）——标签对不上了由框架撤回本体。
+        internal const string AutoTag = "PEF_AUTO";
+
         internal static void RefreshStaticItem(GameItem item)
         {
-            if (!item.IsTag(BaseTag) && rules.Count == 0) return;            // 绝大多数物品在这里就走了
             string id = item.identifier;
             if (string.IsNullOrEmpty(id)) return;
-            if (!Any(PaintTarget.StaticItem, id)) { Heal(item); return; }
-            foreach (PaintRule r in Holding(PaintTarget.StaticItem, id, item))
-                if (SetStaticState(item, r.tag, r.spriteMod, r.spriteKey)) return;   // 没有图的规则跳过，轮到下一条
-            if (Manages(PaintTarget.StaticItem, id, StateOf(item), item)) SetStaticState(item, "", null, null);
+            bool art = ItemArt.Has(id);
+            if (!art && !item.IsTag(BaseTag) && rules.Count == 0) return;   // 绝大多数物品在这里就走了
+            bool ruled = rules.Count > 0 && Any(PaintTarget.StaticItem, id);
+            if (!art && !ruled) { Heal(item); return; }
+            List<string> variants = art ? ItemArt.Variants(id) : null;
+            if (art && !Pulses.Any(item) && Decided(item, id, variants, true)) return;
+            if (ruled)
+                foreach (PaintRule r in Holding(PaintTarget.StaticItem, id, item))
+                {
+                    if (VariantTags.Banned(PaintTarget.StaticItem, id, r.tag)) continue;
+                    if (SetStaticState(item, r.tag, r.spriteMod, r.spriteKey)) { Auto(item, false); return; }   // 没有图的规则跳过，轮到下一条
+                }
+            if (art && Decided(item, id, variants, false)) return;
+            string state = StateOf(item);
+            if (item.IsTag(AutoTag) || (ruled && Manages(PaintTarget.StaticItem, id, state, item)) || (state.Length > 0 && VariantTags.Banned(PaintTarget.StaticItem, id, state)))
+            {
+                SetStaticState(item, "", null, null);
+                Auto(item, false);
+            }
             else Heal(item);
         }
 
-        // 没有规则管、但切过图的静态道具：差分图所在的 mod 被撤了（贴图找不到）就退回本体，免得物品变成缺图。
+        private static bool Decided(GameItem item, string id, List<string> variants, bool explicitOnly)
+        {
+            string want = VariantTags.Best(PaintTarget.StaticItem, id, variants, Wants.ForItem(id, explicitOnly));
+            if (want == null || !SetStaticState(item, want, null, null)) return false;
+            Auto(item, true);
+            return true;
+        }
+
+        private static void Auto(GameItem item, bool on)
+        {
+            if (on == item.IsTag(AutoTag)) return;
+            if (on) item.EnableTag(AutoTag); else item.ModifyTag(AutoTag, s => s.Disable());
+        }
+
+        // 没人管、但切过图的静态道具：图找不到了（差分所在的 mod 被撤了；外部差分读档时还没载入）先试着把图接回来，接不回就退回本体。
         private static void Heal(GameItem item)
         {
             if (!item.IsTag(BaseTag) || !item.useSpriteFromMod || HasSprite(item.spriteAtlasPath, item.spritePath)) return;
+            if (item.spriteAtlasPath == Painter.ModId && ItemArt.EnsureKey(item.spritePath)) { item.SetSprite(Painter.ModId, item.spritePath); return; }
             SetStaticState(item, "", null, null);
+            Auto(item, false);
         }
 
         /// <summary>把静态道具切到某个状态的图（空 = 本体）。那个状态没有图时返回 false，物品不动。</summary>
@@ -376,7 +417,11 @@ namespace ProbablyExtendFramework
                 return true;
             }
             string mod = spriteMod, key = spriteKey;
-            if (key == null && itemVariants.TryGetValue(item.identifier + "#" + tag, out ItemVariant v)) { mod = v.mod; key = v.key; }
+            if (key == null)
+            {
+                ItemArt.Look look = ItemArt.Pick(item.identifier, tag);
+                if (look != null && !ItemArt.Locate(look, out mod, out key)) { mod = null; key = null; }
+            }
             if (key == null) { mod = baseFromMod ? baseAtlas : null; key = baseKey + "_" + tag; }
             if (mod == null || !HasSprite(mod, key)) return false;
             // 已经是这个状态、显示的也确实是这张图 → 不动。只比标签不够：读档后图有可能没跟上。
@@ -384,6 +429,7 @@ namespace ProbablyExtendFramework
             WriteBase(item, baseFromMod, tag, baseAtlas, baseKey);
             item.useSpriteFromMod = true;
             item.SetSprite(mod, key);
+            if (mod == Painter.ModId) ItemArt.Remember(key);
             if (tag != state) Painter.Changed(item, state, tag);
             return true;
         }
@@ -453,12 +499,9 @@ namespace ProbablyExtendFramework
             string id = item?.identifier;
             if (string.IsNullOrEmpty(id)) return list;
             var seen = new HashSet<string>();
-            string prefix = id + "#";
-            foreach (var kv in itemVariants)
+            foreach (string tag in ItemArt.Variants(id))
             {
-                if (!kv.Key.StartsWith(prefix, StringComparison.Ordinal)) continue;
-                string tag = kv.Key.Substring(prefix.Length);
-                Sprite s = ModSprite(kv.Value.mod, kv.Value.key);
+                Sprite s = ItemArt.SpriteOf(ItemArt.Pick(id, tag));
                 if (s != null && seen.Add(tag)) list.Add(new KeyValuePair<string, Sprite>(tag, s));
             }
             foreach (PaintRule r in Ordered())
@@ -533,6 +576,7 @@ namespace ProbablyExtendFramework
         public static void Refresh(GameItem item)
         {
             if (item == null || Retired) return;
+            if (!managedSet.Contains(item)) Manage(item);
             PaintId now = SourceOf(item);
             // 接管来的道具，识别钩子不再认它（兼容层关了、扩展 mod 撤了）：还原原 mod 的原图
             if (now.Valid && PaintRules.IsAdopted(item) && PaintRules.ResolvePortrait(item) == null) { PaintRules.Release(item); return; }
@@ -590,7 +634,7 @@ namespace ProbablyExtendFramework
             Notices.Begin();
             try
             {
-                foreach (GameItem item in Items.All())
+                foreach (GameItem item in new List<GameItem>(managed))   // 1.0.0 rc6 每位来客只过受管清单，不再整店遍历
                 {
                     if (item == null || PaintRules.IsLocked(item)) continue;
                     try
@@ -607,15 +651,62 @@ namespace ProbablyExtendFramework
             SourceReader.Release();
         }
 
-        /// <summary>店里的物品全部重算一遍（读档后、起床后、开门后、关门后本 mod 自动调）。</summary>
+        // ClaudeNote: 1.0.0 rc6 受管清单（Lune：用了储物柜套娃 mod、道具过多会如何？）。
+        //   整店遍历（含容器套容器）是唯一跟“店里有多少东西”成正比的开销。它只在读档和入睡结算时做（RefreshAll），
+        //   做的时候把“框架管得着的物品”记下来：带框架标签的、道具贴图组里有差分的、有规则 / 识别钩子管的。
+        //   其余时候（开店、关店、起床、Notify、自定义检查点）只过这张清单（RefreshManaged），和店里总共多少东西无关。
+        //   白天新到手的物品：买入时进清单（Counter.AfterBought）；别的 mod 造出来的由它自己调 Painter.Refresh(item)（顺带进清单）。
+        private static readonly List<GameItem> managed = new List<GameItem>();
+        private static readonly HashSet<GameItem> managedSet = new HashSet<GameItem>();
+
+        internal static int ManagedCount => managed.Count;
+
+        internal static void Manage(GameItem item)
+        {
+            if (item != null && IsManaged(item) && managedSet.Add(item)) managed.Add(item);
+        }
+
+        private static bool IsManaged(GameItem item)
+        {
+            if (item.IsTag(SourceTag) || item.IsTag(PaintRules.BaseTag) || item.IsTag(PaintRules.LockTag) || item.IsTag(Pulses.ItemTag)) return true;
+            string id = item.identifier;
+            if (string.IsNullOrEmpty(id)) return false;
+            return ItemArt.Has(id) || (PaintRules.Count > 0 && PaintRules.Any(PaintTarget.StaticItem, id)) || PaintRules.ResolvePortrait(item) != null;
+        }
+
+        /// <summary>店里的物品全部重算一遍（整店遍历；框架在读档后、入睡结算时自动调）。</summary>
         public static void RefreshAll()
         {
             if (!PlayerStore.HasInstance || Retired) return;
+            float t = Health.Now;
+            managed.Clear();
+            managedSet.Clear();
             Notices.Begin();
             try
             {
                 foreach (GameItem item in Items.All())
                 {
+                    if (item == null) continue;
+                    try { Manage(item); Refresh(item); }
+                    catch (Exception ex) { OneBadItem(item, ex); }
+                }
+            }
+            finally { Notices.End(); }
+            SourceReader.Release();
+            Health.Took("whole-store pass (" + managed.Count + " managed)", t);
+        }
+
+        /// <summary>只重算受管清单里的物品（开店、关店、起床、Notify 时用）。</summary>
+        public static void RefreshManaged()
+        {
+            if (!PlayerStore.HasInstance || Retired) return;
+            Notices.Begin();
+            try
+            {
+                for (int i = managed.Count - 1; i >= 0; i--)
+                {
+                    GameItem item = managed[i];
+                    if (item == null) { managed.RemoveAt(i); continue; }   // 物品没了（卖掉、销毁）
                     try { Refresh(item); }
                     catch (Exception ex) { OneBadItem(item, ex); }
                 }
