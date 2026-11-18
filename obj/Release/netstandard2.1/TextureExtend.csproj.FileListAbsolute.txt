@@ -1,0 +1,8 @@
+E:\ClaudeGPT\ProbablyStolen\TextureExtend\src\bin\Release\netstandard2.1\TextureExtend.deps.json
+E:\ClaudeGPT\ProbablyStolen\TextureExtend\src\bin\Release\netstandard2.1\TextureExtend.dll
+E:\ClaudeGPT\ProbablyStolen\TextureExtend\src\obj\Release\netstandard2.1\TextureExtend.csproj.AssemblyReference.cache
+E:\ClaudeGPT\ProbablyStolen\TextureExtend\src\obj\Release\netstandard2.1\TextureExtend.GeneratedMSBuildEditorConfig.editorconfig
+E:\ClaudeGPT\ProbablyStolen\TextureExtend\src\obj\Release\netstandard2.1\TextureExtend.AssemblyInfoInputs.cache
+E:\ClaudeGPT\ProbablyStolen\TextureExtend\src\obj\Release\netstandard2.1\TextureExtend.AssemblyInfo.cs
+E:\ClaudeGPT\ProbablyStolen\TextureExtend\src\obj\Release\netstandard2.1\TextureExtend.csproj.CoreCompileInputs.cache
+E:\ClaudeGPT\ProbablyStolen\TextureExtend\src\obj\Release\netstandard2.1\TextureExtend.dll
