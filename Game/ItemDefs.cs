@@ -7,7 +7,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     internal sealed class ItemDef
     {

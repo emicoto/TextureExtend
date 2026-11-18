@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "cJICxn6pBP0=",
+  "dgSpecHash": "NqJTVPUZ3ho=",
   "success": true,
-  "projectFilePath": "E:\\ClaudeGPT\\ProbablyStolen\\TextureExtend\\src\\TextureExtend.csproj",
+  "projectFilePath": "e:\\ClaudeGPT\\ProbablyStolen\\TextureExtend\\src\\ProbablyExtendFramework.csproj",
   "expectedPackageFiles": [
     "E:\\ClaudeGPT\\CommonTools\\nugetPackages\\netstandard.library.ref\\2.1.0\\netstandard.library.ref.2.1.0.nupkg.sha512"
   ],

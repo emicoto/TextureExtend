@@ -16,7 +16,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     internal static class When
     {
@@ -220,13 +220,13 @@ namespace TextureExtend
         {
             if (!named.TryGetValue(name, out Entry2 e))
             {
-                if (missingWarned.Add(name)) TextureExtend.Entry.Warn("condition cond:" + name + " is not registered (treated as false)");
+                if (missingWarned.Add(name)) ProbablyExtendFramework.Entry.Warn("condition cond:" + name + " is not registered (treated as false)");
                 return false;
             }
             try { return e.func(item); }
             catch (Exception ex)
             {
-                if (!e.warned) { e.warned = true; TextureExtend.Entry.Warn("condition cond:" + name + " failed (treated as false): " + ex.Message); }
+                if (!e.warned) { e.warned = true; ProbablyExtendFramework.Entry.Warn("condition cond:" + name + " failed (treated as false): " + ex.Message); }
                 return false;
             }
         }

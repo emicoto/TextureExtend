@@ -9,7 +9,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
-namespace TextureExtend.WorkshopUi
+namespace ProbablyExtendFramework.WorkshopUi
 {
     internal static class Ui
     {
@@ -155,7 +155,10 @@ namespace TextureExtend.WorkshopUi
             {
                 TextMeshProUGUI t = Label(parent, label, x, y, 600f, h, header ? 18f : 15f, header ? Skin.Cream : Skin.Text);
                 width = Mathf.Ceil(t.GetPreferredValues(label).x) + 6f;
-                ((RectTransform)t.transform).sizeDelta = new Vector2(width, h);
+                // ClaudeNote: 0.9.11 这里原来把高度也写回 h——Label 刚为“框太矮整行不显示”让出来的高度（0.8.8）又被改回去了，
+                //   所以带问号的标题（18 号字、框高 26）一直是空的：Lune 的截图里“?”左边什么都没有。只收窄宽度，高度不动。
+                var rt = (RectTransform)t.transform;
+                rt.sizeDelta = new Vector2(width, rt.sizeDelta.y);
             }
             Image dot = Box(parent, x + width, y + (h - 16f) / 2f, 16f, 16f, Skin.Disc, Skin.Text, true);
             Label(dot.transform, "?", 0f, 0f, 16f, 16f, 12f, Skin.Ink, TextAlignmentOptions.Center);

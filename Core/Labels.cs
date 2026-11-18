@@ -1,7 +1,7 @@
 // ClaudeNote: 状态标签在选图窗口里显示的名字。内置常见的情绪 / 时间类标签，其余原样显示。mod 可用 Labels.Set 追加。
 using System.Collections.Generic;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     public static class Labels
     {

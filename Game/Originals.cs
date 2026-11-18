@@ -10,7 +10,7 @@ using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     public static class Originals
     {
@@ -82,6 +82,20 @@ namespace TextureExtend
         }
 
         /// <summary>原图在游戏贴图里的名字 → 用这张原图的立绘键（几张原图同名时有多个）。白蛇娘化这类按原图名字给图的包靠它对上键。</summary>
+        /// <summary>和这个键用的是同一张原图的其它键（游戏里 maleScav1 / miner1、officer_lun / sec… 是同一张图挂了几个键）。没有返回空表。</summary>
+        internal static List<string> Twins(string key)
+        {
+            var list = new List<string>();
+            Sprite mine = Get(key);
+            if (mine == null) return list;
+            foreach (KeyValuePair<string, Sprite> kv in originals)
+            {
+                if (kv.Key == key || kv.Value == null) continue;
+                if (ReferenceEquals(kv.Value, mine) || (kv.Value.texture == mine.texture && kv.Value.rect == mine.rect)) list.Add(kv.Key);
+            }
+            return list;
+        }
+
         internal static Dictionary<string, List<string>> KeysByName()
         {
             Read();

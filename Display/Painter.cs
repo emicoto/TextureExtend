@@ -16,7 +16,7 @@ using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     /// <summary>一张成品图的身份：来源组、组内的键、占几格、差分（没有差分为空）。</summary>
     public readonly struct PaintId
@@ -65,7 +65,7 @@ namespace TextureExtend
 
     public static partial class Painter
     {
-        public const string ModId = "Lune.TextureExtend";
+        public const string ModId = "Lune.ProbablyExtendFramework";   // 1.0.0 改名（原 Lune.TextureExtend）
         // ClaudeNote: 0.8.0 物品上随存档走的三样（Lune 2026-11-18：{ textureOG, textureCur, textureInfo }）：
         //   OgTag     textureOG    第一次经框架换图之前的原样（原图 + 原占格），见 Look / Restyle。
         //   SourceTag textureCur   现在显示的那张图，完整身份：portrait/来源:图ID~编号@格数#差分（PaintId.Text）。
@@ -340,6 +340,23 @@ namespace TextureExtend
             return s;
         }
 
+        /// <summary>同 Preview，但只拿现成的（内存里的、或缓存里已有的成品），绝不为了预览去裁图。没有返回 null。</summary>
+        internal static Sprite PreviewCached(string group, string key, int cells, string variant, HashSet<string> showing)
+        {
+            PaintId id = Canon(new PaintId(group, key, cells, variant));
+            if (!id.Valid) return null;
+            if (!(sprites.TryGetValue(id.Text, out Sprite s) && s != null))
+            {
+                if (Self() == null || !Cache.Has(id, null)) return null;
+                Texture2D tex = Cache.Load(id);
+                if (tex == null) return null;
+                s = Register(id, tex);
+                previews.Add(id.Text);
+            }
+            showing?.Add(id.Text);
+            return s;
+        }
+
         /// <summary>放掉预览图；still 里的（窗口还在显示）留着。</summary>
         internal static void ReleasePreviews(HashSet<string> still)
         {
@@ -477,16 +494,34 @@ namespace TextureExtend
         }
 
         /// <summary>后台预处理一张：缓存里没有（或来源变了）才画，只写缓存、不占内存。返回是否真的画了。</summary>
-        internal static bool Prebake(PaintId id)
+        internal static bool Prebake(PaintId id, bool heavy = false)
         {
             string fileSig = FileSignature(id);
-            if (fileSig != null && Cache.Has(id, fileSig)) return false;   // 外部图片：不读盘就知道不用画
+            // ClaudeNote: 1.0.0 外部图片（立绘包文件夹里的、打包在 DLL 里的）后台一律不预画（Lune：“还是有微妙的卡顿”）。
+            //   后台预处理当初的前提是“单张一两毫秒”——那是游戏原图和已载入的贴图。外部图片要先把几 MB 的 PNG 读出来解码，一张几十毫秒，
+            //   而现在立绘包都是这种：日志里一次进店后台画了 1047 张，等于几分钟里每隔一两百毫秒卡一下。
+            //   平时这类图用到才画（Ensure：道具要显示它、选图窗口翻到它），这里只负责认出“来源变了”，让内存里那张作废。
+            //   heavy = 集中预处理（读档后、入睡时各一次，见 Baker.Burst；Lune 2026-11-18）：这两个时候卡一下不碍事，外部图片也画。
+            if (fileSig != null)
+            {
+                if (Cache.Has(id, fileSig)) return false;
+                if (sprites.TryGetValue(id.Text, out Sprite old) && old != null) Drop(id, old);
+                if (!heavy) return false;
+                Sprite external = Resolve(id);
+                if (external == null) return false;
+                Texture2D made = Bake(id, external, fileSig);
+                if (made == null) return false;
+                UnityEngine.Object.Destroy(made);
+                return true;
+            }
             Sprite source = Resolve(id);
             if (source == null) return false;
-            string signature = fileSig ?? Signature(source, id);
+            string signature = Signature(source, id);
             if (Cache.Has(id, signature)) return false;
             if (sprites.TryGetValue(id.Text, out Sprite stale) && stale != null) Drop(id, stale);   // 来源变了：内存里那张也作废
+            float t = Health.Now;
             Texture2D tex = Bake(id, source, signature);
+            Health.Took("background: bake one image", t);
             if (tex == null) return false;
             UnityEngine.Object.Destroy(tex);
             return true;
@@ -551,8 +586,12 @@ namespace TextureExtend
         internal static List<PaintId> EveryImage()
         {
             var list = new List<PaintId>();
+            // ClaudeNote: 0.9.7 Lune：裁剪成品是给头像系统和立绘衍生道具用的，只该预处理“激活中的立绘包、被激活中 mod 引用的立绘资源包”，
+            //   其余的在手动选图之后才裁。0.8.6 为了让标题界面的工坊有缩略图，把没激活的候选素材也全裁了——工坊现在自己读原图（UI/Workshop/Thumbs.cs），这里收回来。
+            //   没激活的候选：选图时由 Ensure 现裁现存；画到过物品上的成品有 kept 标记，清理不会碰。
             foreach (Portrait p in PortraitLibrary.Everything())
-                foreach (string key in PortraitLibrary.ImagesOf(p.Field)) list.Add(new PaintId(PortraitGroup, key, 4));
+                foreach (string key in PortraitLibrary.ImagesOf(p.Field))
+                    if (Sources.Active(ImageKey.SourceOf(key) ?? p.Source)) list.Add(new PaintId(PortraitGroup, key, 4));
             return list;
         }
 

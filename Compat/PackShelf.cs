@@ -21,15 +21,19 @@
 using System;
 using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
-using TextureExtend.TagSystem;
+using ProbablyExtendFramework.TagSystem;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     /// <summary>伴生 mod 交进来的一张图：立绘 ID（原版键，或 池名+编号 的新立绘）、图片在包文件夹里的相对路径、差分名（本体为空）。</summary>
     public struct PackEntry
     {
         public string Id, Path, Variant;
-        public PackEntry(string id, string path, string variant = null) { Id = id; Path = path; Variant = variant; }
+        /// <summary>0.9.9 这张图不是文件夹里的文件，而是打包在这个 mod 的 DLL 里的资源（Path = 资源名）。</summary>
+        public bool Embedded;
+        /// <summary>0.9.12 子来源的文件夹名（包里带着几套完整的图时，每套一个；见 PortraitLibrary.ResourceTargets）。一般为空。</summary>
+        public string Sub;
+        public PackEntry(string id, string path, string variant = null, bool embedded = false) { Id = id; Path = path; Variant = variant; Embedded = embedded; Sub = null; }
     }
 
     public static class PackShelf
@@ -66,6 +70,22 @@ namespace TextureExtend
             return source != null && packOf.TryGetValue(source, out string pack) && applied.ContainsKey(pack) && !Sources.PackOn(pack);
         }
 
+        /// <summary>架子上这个包登记用的来源名（一般就是包的 mod ID；附带登记表的包用表里的归属名）。</summary>
+        internal static string SourceOf(string packModId) { return BundledTables.Has(packModId) ? BundledTables.OwnerOf(packModId) : packModId; }
+
+        /// <summary>这个包登记了哪些来源（带几套图的包有几个子来源；还没登记时就是包自己）。</summary>
+        internal static List<string> SourcesOf(string packModId)
+        {
+            var list = new List<string>();
+            foreach (KeyValuePair<string, string> kv in packOf) if (kv.Value == packModId) list.Add(kv.Key);
+            if (list.Count == 0) list.Add(SourceOf(packModId));
+            list.Sort(string.CompareOrdinal);
+            return list;
+        }
+
+        /// <summary>来源名 → 包的 mod ID（子来源也认）；不是架子上的包返回 null。</summary>
+        internal static string PackOf(string source) { return source != null && packOf.TryGetValue(source, out string pack) ? pack : null; }
+
         /// <summary>伴生 mod 用：把一个未启用的包的图片清单交给框架（上架，默认只当候选素材）。再交一次 = 换清单。</summary>
         public static void Offer(string packModId, IEnumerable<PackEntry> entries)
         {
@@ -79,6 +99,26 @@ namespace TextureExtend
             Withdraw(packModId);   // 已经登记过的：换成新清单
             Apply();
             Painter.NeedScan = true;
+        }
+
+        // ClaudeNote: 0.9.10 Lune：“白蛇不启用了，作为来源没被探测到”——她是在标题界面看的。伴生 mod 的清单要等读档后才交得出来
+        //   （认图要对原版立绘表，标题界面没有），所以读档之前架子上根本没有这个包，工坊“来源”页也就没有它。
+        //   现在分两步：伴生 mod 在标题界面先“报到”（只说这个没启用的 mod 是个立绘包，够在来源页露面、激活、设为主来源），读档后再交完整清单。
+        private static readonly HashSet<string> announced = new HashSet<string>();
+
+        /// <summary>伴生 mod 用：报到一个没启用的立绘包（清单稍后经 Offer 交来）。</summary>
+        public static void Announce(string packModId)
+        {
+            LoadedMod mod = Find(packModId);
+            if (mod != null && !mod.IsEnabled) announced.Add(packModId);
+        }
+
+        /// <summary>伴生 mod 用：这个文件名 / 资源名的最后一段（不带扩展名）看起来是不是一张立绘。标题界面也能问（那时对的是工坊目录里记的原版立绘键）。</summary>
+        public static bool LooksLikePortrait(string stem)
+        {
+            if (string.IsNullOrEmpty(stem)) return false;
+            if (PortraitLibrary.Ready ? Originals.Get(stem) != null : Workshop.KnowsGameKey(stem)) return true;
+            return ResourceAliases.Of(stem) != null || (PortraitTags.TryStructure(stem, out string field, out _) && stem.StartsWith(field, StringComparison.Ordinal));
         }
 
         /// <summary>架子上有哪些包（未启用的 mod 里认得出的）。只做几次“文件在不在”的探测，开窗口时才调。</summary>
@@ -102,7 +142,7 @@ namespace TextureExtend
 
         private static string KindOf(string modId)
         {
-            if (offers.ContainsKey(modId)) return "listed";
+            if (offers.ContainsKey(modId) || announced.Contains(modId)) return "listed";
             if (!kinds.TryGetValue(modId, out string kind)) kinds[modId] = kind = Probe(modId) ?? "";
             return kind.Length > 0 ? kind : null;
         }
@@ -147,6 +187,7 @@ namespace TextureExtend
             {
                 string id = mod?.Manifest?.ID;
                 if (id == null || mod.IsEnabled || id == Painter.ModId || applied.ContainsKey(id) || KindOf(id) == null) continue;
+                if (announced.Contains(id) && !offers.ContainsKey(id) && Probe(id) == null) continue;   // 只报到了、清单还没交来：等 Offer
                 int n = 0;
                 try { n = Register(id, mod); }
                 catch (Exception ex) { Entry.Warn("read-only pack " + id + " not registered: " + ex.Message); }
@@ -161,13 +202,14 @@ namespace TextureExtend
         {
             if (!applied.Remove(modId)) return;
             if (BundledTables.Has(modId)) { BundledTables.Remove(modId); return; }
-            Painter.UnregisterAll(modId);
+            foreach (string source in SourcesOf(modId)) { Painter.UnregisterAll(source); if (source != modId) packOf.Remove(source); }
         }
 
         internal static void Reset()
         {
             foreach (string id in new List<string>(applied.Keys)) Withdraw(id);
             offers.Clear();
+            announced.Clear();
             kinds.Clear();
         }
 
@@ -179,7 +221,16 @@ namespace TextureExtend
             if (declared > 0) return declared;
             if (offers.TryGetValue(id, out Shelf offer))
             {
-                foreach (PackEntry e in offer.offered) PortraitLibrary.RegisterFile(id, e.Id, id, e.Path, e.Variant);
+                bool plain = false;
+                foreach (PackEntry e in offer.offered)
+                {
+                    string source = PortraitLibrary.SubSource(id, e.Sub);
+                    plain |= source == id;
+                    packOf[source] = id;
+                    if (e.Embedded) PortraitLibrary.RegisterEmbedded(source, e.Id, id, e.Path, e.Variant);
+                    else PortraitLibrary.RegisterFile(source, e.Id, id, e.Path, e.Variant);
+                }
+                if (!plain && offer.offered.Count > 0) packOf.Remove(id);   // 图全在子来源里：包自己这个名字下面没有图，不占一行
                 return offer.offered.Count;
             }
             if (ModHelper.ModFileExists(id, CsvFile)) return CsvLoader.File(id, CsvFile, id);

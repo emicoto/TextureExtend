@@ -14,7 +14,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.U2D;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     public static class HdRender
     {
@@ -52,9 +52,11 @@ namespace TextureExtend
             broken = false;
         }
 
+        private static bool Allowed() { return Enabled && Painter.Running && !Painter.Retired; }
+
         private static bool Wanted()
         {
-            if (!Enabled || !Painter.Running || Painter.Retired) return false;
+            if (!Allowed()) return false;
             StoreClientMono mono = StoreClientMono.Instance;
             if (mono == null || !mono.isActiveAndEnabled || mono.image == null || !mono.image.enabled) return false;
             if (mono.image.forceRenderingOff) return false;   // ClaudeNote: 0.6.0 别的 mod 把这张关掉、自己在界面层上画（Yield）：店面不用改
@@ -63,13 +65,20 @@ namespace TextureExtend
 
         private static void Tick()
         {
-            bool want = Wanted();
-            if (!want) { if (held != null) Restore(); return; }
+            // ClaudeNote: 0.9.13 Lune：“客人来前后有明显卡顿，帧率突然猛掉 10~20 帧”。
+            //   原来是“高清立绘上柜台就切到屏幕分辨率、离开就切回去”：每切一次，相机的画布要重建、描边要重开——来一位客人卡两下（来、走）。
+            //   现在切过去之后就留着，直到这项功能被关掉 / 框架停用 / 离开店面（相机没了）。柜台空着或来的是像素风立绘时也按屏幕分辨率画：
+            //   原版像素图是点采样，直接按屏幕分辨率画和“先画小再放大”看起来一样（这是当初敢这么做的前提）。
+            //   游戏自己把 upscaleRT 改回去时（改画面选项），下一位高清来客上柜台会再切一次。
+            if (held != null && (!Allowed() || EmporiumEntry.Instance == null || !ReferenceEquals(EmporiumEntry.Instance.pixelPerfectCamera, held))) { Restore(); return; }
+            if (!Wanted()) return;
             PixelPerfectCamera ppc = EmporiumEntry.Instance != null ? EmporiumEntry.Instance.pixelPerfectCamera : null;
             if (ppc == null || !ppc.upscaleRT) return;            // 本来就是屏幕分辨率（或别的 mod 已经关了）
+            float t = Health.Now;
             held = ppc;
             ppc.upscaleRT = false;
             RefreshOutliner();
+            Health.Took("HD render: switch the shop to screen resolution", t);
         }
 
         private static void Restore()

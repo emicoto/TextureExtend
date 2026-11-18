@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TextureExtend")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+082d89395cc8f474d45c94c5fe58033aff1bded3")]
 [assembly: System.Reflection.AssemblyProductAttribute("TextureExtend")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TextureExtend")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

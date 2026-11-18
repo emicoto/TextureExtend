@@ -7,7 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     internal static class Health
     {
@@ -37,12 +37,42 @@ namespace TextureExtend
             Entry.Warn(where + " failed: " + message);
         }
 
-        internal static void Clear() { issues.Clear(); kinds.Clear(); }
+        // ClaudeNote: 0.9.13 耗时记录（Lune：“客人来前后有明显卡顿”）。卡在哪一步不能靠猜：在主线程上可能费时的几处各包一层计时，
+        //   超过一帧（SlowMs）的记下来——每处记次数、最长一次、总时长；每处头几次写进日志，之后只累加。状态报告 / 接触面自检末尾列出全部。
+        //   计时本身是两次读时钟，不分配内存。
+        private const float SlowMs = 12f;
+        private const int LogFirst = 3;
+        private sealed class Cost { internal int count; internal float worst, total; }
+        private static readonly Dictionary<string, Cost> costs = new Dictionary<string, Cost>();
+
+        internal static float Now => UnityEngine.Time.realtimeSinceStartup;
+
+        /// <summary>记一步的耗时（startedAt = 开始时的 Health.Now）。不到 SlowMs 的不记。</summary>
+        internal static void Took(string what, float startedAt)
+        {
+            float ms = (UnityEngine.Time.realtimeSinceStartup - startedAt) * 1000f;
+            if (ms < SlowMs) return;
+            if (!costs.TryGetValue(what, out Cost c)) costs[what] = c = new Cost();
+            c.count++; c.total += ms;
+            if (ms > c.worst) c.worst = ms;
+            if (c.count <= LogFirst) Entry.Info("slow step: " + what + " took " + ms.ToString("0") + " ms");
+        }
+
+        internal static void Clear() { issues.Clear(); kinds.Clear(); costs.Clear(); }
+
+        private static string Costs()
+        {
+            if (costs.Count == 0) return "slow steps (over " + SlowMs.ToString("0") + " ms on the main thread): none";
+            var b = new StringBuilder("slow steps (over " + SlowMs.ToString("0") + " ms on the main thread):");
+            foreach (KeyValuePair<string, Cost> kv in costs)
+                b.Append("\n  · ").Append(kv.Key).Append("  ×").Append(kv.Value.count).Append("  worst ").Append(kv.Value.worst.ToString("0")).Append(" ms  total ").Append(kv.Value.total.ToString("0")).Append(" ms");
+            return b.ToString();
+        }
 
         internal static string Summary()
         {
-            if (issues.Count == 0) return "runtime errors: none";
-            var b = new StringBuilder("runtime errors:");
+            if (issues.Count == 0) return "runtime errors: none\n" + Costs();
+            var b = new StringBuilder(Costs() + "\nruntime errors:");
             foreach (KeyValuePair<string, Issue> kv in issues)
                 b.Append("\n  × ").Append(kv.Value.where).Append("  ×").Append(kv.Value.count).Append("  → ").Append(kv.Value.message);
             return b.ToString();

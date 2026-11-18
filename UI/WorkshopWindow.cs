@@ -10,20 +10,27 @@ using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
-using TextureExtend.TagSystem;
-using TextureExtend.WorkshopUi;
+using ProbablyExtendFramework.TagSystem;
+using ProbablyExtendFramework.WorkshopUi;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     internal static class WorkshopWindow
     {
         private const float W = 1100f, H = 640f, CW = 1044f, CH = 420f, LeftW = 560f, RightX = 580f, RightW = 464f;
         private const int Columns = 4, PerPage = 12;
-        private static readonly string[] tabs = { "target", "tags", "pool", "out" };
+        // ClaudeNote: 0.9.8 立绘多两页，排在最前（Lune 2026-11-18）：来源 = 选主来源包；立绘 = 游戏的每个立绘键用哪个来源
+        // ClaudeNote: 0.9.11 入口重排（Lune 2026-11-18 的标注图）：顶上三个模式——立绘来源（默认）/ 立绘扩展 / 道具扩展。
+        //   立绘来源 = 来源设置（主来源 + 逐张指定）与来源激活（立绘包开关）两页，底下是立绘预设；后两个模式是原来的四页，底下是导出那三个按钮。
+        private static readonly string[] extendTabs = { "target", "tags", "pool", "out" }, sourceTabs = { "source", "manage" };
+        private static bool sourceMode = true;
+        private static string presetName = "";
+        private static int presetAt;
+        private static string[] Tabs => sourceMode ? sourceTabs : extendTabs;
 
         private static GameObject canvas;
         private static RectTransform window;
-        private static string scope = Workshop.Portrait, tab = "target";
+        private static string scope = Workshop.Portrait, tab = "source";
         private static string picked, poolPicked;
         private static int page, sourceAt, typeAt, filterAt, groupAt, addAt, condAt, viewAt, upAt, bindAt, dirty;
         private static string search = "", newGroup = "", newTag = "", said = "";
@@ -32,6 +39,8 @@ namespace TextureExtend
 
         private static string T(string zh, string en) { return Entry.Chinese ? zh : en; }
         private static string ScopeName => scope == Workshop.Item ? T("道具", "item") : T("立绘", "portrait");
+
+        internal static void Toggle() { if (canvas != null) Close(); else Open(); }
 
         internal static void Open()
         {
@@ -79,12 +88,13 @@ namespace TextureExtend
             byGroup.Clear();
             showing.Clear();
             Painter.ReleasePreviews(null);
+            Thumbs.Release();
         }
 
         // 画布上的小组件：Esc 关窗；画布被销毁（换场景）时把其余的也收掉
         private sealed class Host : MonoBehaviour
         {
-            private void Update() { if (Input.GetKeyDown(KeyCode.Escape)) Close(); }
+            private void Update() { if (Input.GetKeyDown(KeyCode.Escape)) { Close(); return; } Thumbs.Step(); }
             private void OnDestroy() { if (canvas == gameObject) { canvas = null; Close(); } }
         }
 
@@ -102,6 +112,8 @@ namespace TextureExtend
             Tip.Hide();
             for (int i = window.childCount - 1; i >= 0; i--) UnityEngine.Object.Destroy(window.GetChild(i).gameObject);
             showing = new HashSet<string>();
+            Thumbs.Forget();
+            if (Thumbs.Count > 240) Thumbs.Release();   // 翻过很多页：小样全放掉，当前这页重读
             try
             {
                 Ui.Box(window, 0f, 0f, W, H, Skin.Window, Color.white, true);
@@ -111,37 +123,54 @@ namespace TextureExtend
                 Ui.Box(window, 643f, 39f, 22f, 22f, Skin.Corner, Skin.Teal);
                 Ui.Label(window, T("贴图扩展工坊", "Texture Workshop"), 28f, 6f, 360f, 50f, 34f, Skin.Ink, TextAlignmentOptions.MidlineLeft, true);
                 Ui.Label(window, "v" + Entry.Version + "  ·  " + T("未导出 ", "Unsaved ") + dirty, 400f, 30f, 230f, 24f, 13f, Skin.Ink);   // 版本号摆在明处：装没装上新版一眼能看出来
-                Mode(T("立绘扩展", "Portraits"), Workshop.Portrait, W - 372f);
-                Mode(T("道具扩展", "Items"), Workshop.Item, W - 208f);
+                Mode(T("立绘来源", "Sources"), true, Workshop.Portrait, W - 536f);
+                Mode(T("立绘扩展", "Portraits"), false, Workshop.Portrait, W - 372f);
+                Mode(T("道具扩展", "Items"), false, Workshop.Item, W - 208f);
                 Image close = Ui.Box(window, W - 38f, 8f, 26f, 26f, Skin.White, Skin.Ink, true);
                 Ui.Label(close.transform, "x", 0f, 0f, 26f, 24f, 18f, Skin.Teal, TextAlignmentOptions.Center, true);
                 Ui.Clickable(close, Close);
 
                 // 四页
-                string[] names = { T("目标", "Targets"), T("标签", "Tags"), T("抽选", "Pools"), T("导出", "Export") };
-                string[] subs = { T("给", "Tag ") + ScopeName + T("加标签", "s"), T("标签与标签组", "Tags and groups"), T("条件与限制", "Conditions"), T("注册文件", "Registration file") };
+                var names = new Dictionary<string, string[]>
+                {
+                    { "source", new[] { T("来源一览", "Sources"), T("选主来源、开关立绘包", "Main source and packs") } },
+                    { "manage", new[] { T("逐张指定", "Per key") , T("每个立绘键用哪个来源", "Source for each key") } },
+                    { "target", new[] { T("目标", "Targets"), T("给", "Tag ") + ScopeName + T("加标签", "s") } },
+                    { "tags", new[] { T("标签", "Tags"), T("标签与标签组", "Tags and groups") } },
+                    { "pool", new[] { T("抽选", "Pools"), T("条件与限制", "Conditions") } },
+                    { "out", new[] { T("导出", "Export"), T("注册文件", "Registration file") } },
+                };
+                string[] tabs = Tabs;
+                if (Array.IndexOf(tabs, tab) < 0) tab = tabs[0];
+                float tabX = (W - (tabs.Length * 130f - 10f)) / 2f;
                 for (int i = 0; i < tabs.Length; i++)
                 {
                     string to = tabs[i];
-                    Image t = Ui.Box(window, 295f + i * 130f, 72f, 120f, 48f, Skin.Tab, tab == to ? Skin.Pick : Skin.Teal, true);
-                    Ui.Label(t.transform, names[i], 0f, 3f, 120f, 26f, 22f, Skin.Ink, TextAlignmentOptions.Center, true);
-                    Ui.Label(t.transform, subs[i], 0f, 27f, 120f, 16f, 11f, Skin.Ink, TextAlignmentOptions.Center);
+                    Image t = Ui.Box(window, tabX + i * 130f, 72f, 120f, 48f, Skin.Tab, tab == to ? Skin.Pick : Skin.Teal, true);
+                    Ui.Label(t.transform, names[to][0], 0f, 3f, 120f, 26f, 22f, Skin.Ink, TextAlignmentOptions.Center, true);
+                    Ui.Label(t.transform, names[to][1], 0f, 27f, 120f, 16f, 11f, Skin.Ink, TextAlignmentOptions.Center);
                     Ui.Clickable(t, () => { tab = to; said = ""; Build(); });
                 }
                 Ui.Box(window, 28f, 130f, CW, 1f, Skin.White, Skin.Line);
 
                 RectTransform content = Ui.Rect(window, "content", 28f, 142f, CW, CH);
-                if (Workshop.List(scope).Count == 0)
+                if (tab == "source") SourcePage(content);   // 激活立绘包不需要目录（第一次用：先激活、再读档）
+                else if (Workshop.List(scope).Count == 0)
                     Ui.Label(content, T("还没有目录：先进一次存档、在店里待几秒，再回标题界面打开这里。", "No catalog yet: load a save, wait a few seconds in the shop, then come back."), 0f, 150f, CW, 60f, 18f, Skin.Warn, TextAlignmentOptions.Center, false, true);
+                else if (tab == "manage") ManagePage(content);
                 else if (tab == "target") Targets(content);
                 else if (tab == "tags") Tags(content);
                 else if (tab == "pool") Pools(content);
                 else Out(content);
 
                 Ui.Box(window, 28f, 572f, CW, 1f, Skin.White, Skin.Line);
-                Ui.Button(window, T("导出", "Export"), W / 2f - 215f, 582f, 130f, 34f, DoExport, dirty > 0);
-                Ui.Button(window, T("复制文本", "Copy text"), W / 2f - 65f, 582f, 130f, 34f, () => { GUIUtility.systemCopyBuffer = Workshop.Csv(); Say(T("注册表格的文本已复制到剪贴板。", "Registration text copied.")); Build(); });
-                Ui.Button(window, T("撤销改动", "Discard"), W / 2f + 85f, 582f, 130f, 34f, () => { Workshop.Reload(); dirty = 0; Say(T("已撤销。", "Discarded.")); Build(); });
+                if (sourceMode) PresetBar();
+                else
+                {
+                    Ui.Button(window, T("导出", "Export"), W / 2f - 215f, 582f, 130f, 34f, DoExport, dirty > 0);
+                    Ui.Button(window, T("复制文本", "Copy text"), W / 2f - 65f, 582f, 130f, 34f, () => { GUIUtility.systemCopyBuffer = Workshop.Csv(); Say(T("注册表格的文本已复制到剪贴板。", "Registration text copied.")); Build(); });
+                    Ui.Button(window, T("撤销改动", "Discard"), W / 2f + 85f, 582f, 130f, 34f, () => { Workshop.Reload(); dirty = 0; Say(T("已撤销。", "Discarded.")); Build(); });
+                }
                 string stale = said.Length == 0 ? Workshop.Stale() : null;   // 目录过期：没有别的话要说时常驻提示
                 if (said.Length > 0 || stale != null) Ui.Label(window, stale ?? said, 28f, 616f, CW, 18f, 13f, stale != null || saidBad ? Skin.Warn : Skin.Note, TextAlignmentOptions.Center);
             }
@@ -150,20 +179,58 @@ namespace TextureExtend
             SourceReader.Release();
         }
 
-        private static void Mode(string label, string to, float x)
+        private static void Mode(string label, bool source, string to, float x)
         {
-            bool on = scope == to;
+            bool on = sourceMode == source && scope == to;
             Image b = Ui.Box(window, x, 6f, 156f, 30f, Skin.White, on ? Skin.Pick : Skin.Ink, true);
             Ui.Label(b.transform, label, 0f, 0f, 156f, 30f, 20f, on ? Skin.Ink : Skin.Teal, TextAlignmentOptions.Center, true);
             Ui.Clickable(b, () =>
             {
-                if (scope == to) return;
-                scope = to; picked = poolPicked = null;
+                if (sourceMode == source && scope == to) return;
+                sourceMode = source; scope = to; picked = poolPicked = manageKey = null;
+                tab = Tabs[0];
                 picks.Clear(); tagSearch = ""; tagScrollAt = 1f;
                 page = sourceAt = typeAt = filterAt = groupAt = addAt = condAt = upAt = bindAt = 0;
                 search = newGroup = newTag = said = "";
                 Build();
             });
+        }
+
+        // ── 立绘预设（立绘来源模式的底栏）：预设名 + 保存；存过的在下拉框里选了加载。存的是整套来源设置（Sources.SavePreset） ──
+        private static void PresetBar()
+        {
+            List<string> presets = Sources.Presets();
+            const float y = 582f, inputW = 220f, buttonW = 120f, dropW = 240f;
+            float x = (W - (inputW + 8f + buttonW + (presets.Count > 0 ? 28f + dropW + 8f + buttonW : 0f))) / 2f;
+            Ui.Input(window, T("预设名", "Preset name"), presetName, x, y + 3f, inputW, 28f, null).onValueChanged.AddListener(v => presetName = v ?? "");
+            Ui.Button(window, T("保存预设", "Save preset"), x + inputW + 8f, y, buttonW, 34f, () =>
+            {
+                string name = Sources.PresetName(presetName);
+                if (name == null) Say(T("先给预设起个名字。", "Name the preset first."), true);
+                else
+                {
+                    bool had = presets.Contains(name);
+                    if (!Sources.SavePreset(name)) Say(T("预设没存上，详见日志。", "Preset not saved; see the log."), true);
+                    else
+                    {
+                        presetName = name;
+                        presetAt = Mathf.Max(0, Sources.Presets().IndexOf(name));
+                        Say(T(had ? "已覆盖预设“" : "已保存预设“", had ? "Preset overwritten: " : "Preset saved: ") + name + T("”。", "."));
+                    }
+                }
+                Build();
+            }, false, 16f);
+            if (presets.Count == 0) return;
+            presetAt = Mathf.Clamp(presetAt, 0, presets.Count - 1);
+            float dx = x + inputW + 8f + buttonW + 28f;
+            Ui.Dropdown(window, presets, presetAt, dx, y + 3f, dropW, 28f, i => { presetAt = i; Build(); });
+            Ui.Button(window, T("加载预设", "Load preset"), dx + dropW + 8f, y, buttonW, 34f, () =>
+            {
+                string name = presets[presetAt];
+                if (Sources.LoadPreset(name)) { presetName = name; manageKey = null; Say(T("已换成预设“", "Loaded preset: ") + name + T("”。在店里即时生效；在标题界面，读档后生效。", ". Applies at once in the shop; from the title screen, after loading a save.")); }
+                else Say(T("预设“", "Preset ") + name + T("”读不出来，详见日志。", " could not be read; see the log."), true);
+                Build();
+            }, false, 16f);
         }
 
         private static void DoExport()
@@ -177,6 +244,213 @@ namespace TextureExtend
         private static Sprite FrameOf(string name)
         {
             return Workshop.Current.tags.TryGetValue(name, out Workshop.Tag tag) && tag.scope == scope ? (tag.group ? Skin.ChipGroup : Skin.ChipMine) : Skin.Chip;
+        }
+
+        // ── 来源：选主来源包 ──
+        // ClaudeNote: 0.9.8 Lune 2026-11-18 的兼容方案：立绘包在游戏的 Mods 菜单里保持不启用（它们各自的换图补丁就不会互相打架、也不会和框架打架），
+        //   由框架读它们文件夹里的图，按图 ID 对上游戏的立绘键来替换。这一页选“主来源”：默认用它的图；它没有的键按其余激活来源的优先级补，再没有就是游戏原图。
+        //   底下用的是早就有的机制（Sources 的全局顺序第一位 + PackShelf 的激活开关），这里只是把入口摆到明处。
+        private sealed class SourceRow { internal string source, pack, label, state; internal int count; internal bool dormant; }
+        private static int sourcePage;
+
+        private static List<SourceRow> SourceRows()
+        {
+            var rows = new List<SourceRow>();
+            var counts = new Dictionary<string, int>();
+            HashSet<string> keys = GameKeys();
+            foreach (Workshop.Target t in Workshop.Catalog.images ?? new List<Workshop.Target>())
+            {
+                if (string.IsNullOrEmpty(t.src) || !keys.Contains(t.id)) continue;
+                ImageKey.Parse(t.key, out _, out _, out int number);
+                if (number == 0) counts[t.src] = (counts.TryGetValue(t.src, out int n) ? n : 0) + 1;
+            }
+            var packs = new Dictionary<string, string>();   // 来源 → 没启用的包
+            foreach (PackShelf.Shelf shelf in PackShelf.List())
+                foreach (string source in PackShelf.SourcesOf(shelf.ModId)) packs[source] = shelf.ModId;   // 带几套图的包：每套一行（子来源）
+            var ids = new List<string>(counts.Keys);
+            foreach (string s in packs.Keys) if (!ids.Contains(s)) ids.Add(s);
+            ids.Remove(ItemDefs.Game);
+            ids.Sort((a, b) => string.CompareOrdinal(Workshop.SourceLabel(a), Workshop.SourceLabel(b)));
+            ids.Insert(0, ItemDefs.Game);
+            foreach (string id in ids)
+            {
+                packs.TryGetValue(id, out string pack);
+                bool on = pack != null && Sources.PackOn(pack);
+                rows.Add(new SourceRow
+                {
+                    source = id, pack = pack, label = Workshop.SourceLabel(id), dormant = pack != null && !on,
+                    count = counts.TryGetValue(id, out int n) ? n : -1,
+                    state = id == ItemDefs.Game ? T("游戏原版", "Game") : pack == null ? T("启用中的 mod", "Enabled mod") : on ? T("未启用的包 · 已激活", "Inactive pack · on") : T("未启用的包 · 候选", "Inactive pack · candidate"),
+                });
+            }
+            return rows;
+        }
+
+        // 游戏自带的立绘键（目录里“游戏原图”这个来源提供的图 ID）
+        private static HashSet<string> GameKeys()
+        {
+            var keys = new HashSet<string>();
+            foreach (Workshop.Target t in Workshop.Catalog.images ?? new List<Workshop.Target>()) if (t.src == ItemDefs.Game) keys.Add(t.id);
+            return keys;
+        }
+
+        private static void SourcePage(RectTransform c)
+        {
+            List<SourceRow> rows = SourceRows();
+            string main = Sources.Main;
+            int total = GameKeys().Count;
+            Ui.Info(c, T("来源一览", "Sources"), T("框架认得的全部立绘来源。立绘包在游戏的 Mods 菜单里保持不启用，由框架读它们的图、按图 ID 对上游戏的立绘键来替换。主来源 = 默认用它的图；它没有的键按其余激活来源的优先级补，再没有就是游戏原图。“候选”的包不参加自动挑选，只能在“逐张指定”里点名；设为主来源会顺带激活。带几套图的包（全身 / 半身）每套一行。选好的整套设置可以在底下存成预设。", "Every portrait source the framework knows. Keep portrait packs disabled in the game's Mods menu; the framework reads their images and matches them to the game's portrait keys. The main source is used by default; keys it lacks fall back to the other active sources, then to the game. The whole setup can be saved as a preset below."), 0f, 0f, 26f, true);
+            Ui.Label(c, main == null ? T("没有指定主来源（按默认优先级）", "No main source (default priority)") : T("主来源：", "Main: ") + Workshop.SourceLabel(main), CW - 420f, 0f, 420f, 26f, 13f, Skin.Note, TextAlignmentOptions.MidlineRight);
+            const float rowH = 32f, top = 34f;
+            const int perPage = 10;
+            int pages = Mathf.Max(1, (rows.Count + perPage - 1) / perPage);
+            sourcePage = Mathf.Clamp(sourcePage, 0, pages - 1);
+            for (int i = sourcePage * perPage; i < Mathf.Min(rows.Count, (sourcePage + 1) * perPage); i++)
+            {
+                SourceRow row = rows[i];
+                float y = top + (i - sourcePage * perPage) * (rowH + 3f);
+                bool isMain = row.source == main;
+                Image back = Ui.Box(c, 0f, y, CW, rowH, isMain ? Skin.PanelOn : Skin.Panel, Color.white);
+                Ui.Label(back.transform, row.label, 12f, 0f, 380f, rowH, 15f, isMain ? Skin.Cream : Skin.Text);
+                Ui.Label(back.transform, row.state, 400f, 0f, 200f, rowH, 12f, row.dormant ? Skin.Note : Skin.Text);
+                Ui.Label(back.transform, row.count < 0 ? T("进店后统计", "counted in shop") : row.count + " / " + total, 600f, 0f, 130f, rowH, 12f, Skin.Text);
+                if (row.pack != null)
+                    Ui.Button(back.transform, row.dormant ? T("激活", "Turn on") : T("取消激活", "Turn off"), CW - 260f, 3f, 110f, rowH - 6f, () =>
+                    {
+                        if (!row.dormant && Sources.Main == row.source) Sources.SetMain(null);   // 主来源被取消激活：不再是主来源
+                        PackShelf.Set(row.pack, row.dormant);
+                        Say(row.label + (row.dormant ? T(" 已激活。", " is on.") : T(" 已取消激活（只当候选）。", " is off (candidate only).")));
+                        Build();
+                    }, false, 13f);
+                Ui.Button(back.transform, isMain ? T("主来源", "Main") : T("设为主来源", "Make main"), CW - 130f, 3f, 122f, rowH - 6f, () =>
+                {
+                    if (isMain) return;
+                    if (row.dormant) PackShelf.Set(row.pack, true);
+                    Sources.SetMain(row.source);
+                    Say(T("主来源改成了 ", "Main source: ") + row.label + T("。在店里即时生效；在标题界面，读档后生效。", ". Applies at once in the shop; from the title screen, after loading a save."));
+                    Build();
+                }, isMain, 13f);
+            }
+            const float rowY = 388f, pagerW = 64f, pagerMid = 110f;
+            Ui.Button(c, T("恢复游戏原版", "Restore vanilla"), 0f, rowY, 150f, 32f, () =>
+            {
+                Sources.RestoreVanilla();
+                manageKey = null;
+                Say(T("已恢复游戏原版：逐张指定全部取消、立绘包全部取消激活、主来源 = 游戏原版。想留着刚才那套，下次先存成预设。", "Back to vanilla: per-key choices cleared, packs turned off, main source = game."));
+                Build();
+            }, false, 14f);
+            if (main != null) Ui.Button(c, T("不指定主来源", "No main source"), 158f, rowY, 150f, 32f, () => { Sources.SetMain(null); Say(T("已清除主来源。", "Main source cleared.")); Build(); }, false, 14f);
+            if (pages > 1)
+            {
+                float px = (CW - pagerW * 2f - pagerMid) / 2f;
+                if (sourcePage > 0) Ui.Button(c, "<", px, rowY, pagerW, 32f, () => { sourcePage--; Build(); });
+                Ui.Label(c, (sourcePage + 1) + " / " + pages, px + pagerW, rowY, pagerMid, 32f, 16f, Skin.Cream, TextAlignmentOptions.Center);
+                if (sourcePage < pages - 1) Ui.Button(c, ">", px + pagerW + pagerMid, rowY, pagerW, 32f, () => { sourcePage++; Build(); });
+            }
+        }
+
+        // ── 立绘：游戏的每个立绘键用哪个来源 ──
+        // ClaudeNote: 0.9.8 列出游戏自带的全部立绘键，每格显示它现在用的那张（没选来源 = 游戏原图）；点一格 → 这个键在各来源里的图，点哪张就指定用哪个来源。
+        //   存的是早就有的“按角色指定”（Sources.ChooseFor），优先级最高。
+        private static string manageKey, manageSearch = "";
+        private static int managePage;
+
+        // 这个键现在用哪个来源。店面里问立绘库（准确）；标题界面没有立绘库，按“手动指定 → 全局顺序 → 上次存目录时的选择”估
+        private static string SourceNow(string id, Workshop.Target root)
+        {
+            if (PortraitLibrary.Ready) { string live = Sources.Selected(id); if (live != null) return live; }
+            string chosen = Sources.Chosen(id);
+            if (chosen != null && Workshop.ImageOf(id, chosen) != null) return chosen;
+            foreach (string s in Sources.Order) if (Workshop.ImageOf(id, s) != null) return s;
+            return root?.src ?? ItemDefs.Game;
+        }
+
+        private static void ManagePage(RectTransform c)
+        {
+            List<Workshop.Target> roots = Workshop.Catalog.portrait ?? new List<Workshop.Target>();
+            HashSet<string> keys = GameKeys();
+            if (manageKey != null && keys.Contains(manageKey)) { ManageOne(c, manageKey, roots.Find(t => t.id == manageKey)); return; }
+            string needle = manageSearch.Trim().ToLowerInvariant();
+            var shown = new List<Workshop.Target>();
+            foreach (Workshop.Target t in roots) if (keys.Contains(t.id) && (needle.Length == 0 || t.id.ToLowerInvariant().IndexOf(needle, StringComparison.Ordinal) >= 0)) shown.Add(t);
+            Ui.Info(c, T("逐张指定", "Per key"), T("游戏自带的全部立绘键，每格是这个键现在显示的那张（没选来源 = 游戏原图）。点一格可以单独指定它用哪个来源的图；带“手动”的是指定过的，优先级最高，主来源也盖不过。", "Every portrait key of the game, showing the image it uses now. Click one to choose its source by hand; that beats the main source."), 0f, 0f, 26f, true);
+            Ui.Label(c, shown.Count + " / " + keys.Count, CW - 320f, 0f, 120f, 26f, 13f, Skin.Note, TextAlignmentOptions.MidlineRight);
+            Ui.Input(c, T("搜 立绘键", "Search key"), manageSearch, CW - 180f, 0f, 180f, 26f, null).onSubmit.AddListener(v => { manageSearch = v ?? ""; managePage = 0; Build(); });
+            const int columns = 6, perPage = 18;
+            const float gap = 8f, cardH = 112f, imageH = 76f;
+            float cardW = (CW - gap * (columns - 1)) / columns;
+            int pages = Mathf.Max(1, (shown.Count + perPage - 1) / perPage);
+            managePage = Mathf.Clamp(managePage, 0, pages - 1);
+            for (int i = managePage * perPage; i < Mathf.Min(shown.Count, (managePage + 1) * perPage); i++)
+            {
+                Workshop.Target t = shown[i];
+                int slot = i - managePage * perPage;
+                string src = SourceNow(t.id, t), key = Workshop.ImageOf(t.id, src)?.key ?? t.id;
+                bool byHand = Sources.Chosen(t.id) != null;
+                Image card = Ui.Box(c, slot % columns * (cardW + gap), 32f + slot / columns * (cardH + 6f), cardW, cardH, byHand ? Skin.PanelOn : Skin.Panel, Color.white, true);
+                Image hold = Ui.Box(card.transform, 4f, 4f, cardW - 8f, imageH, Skin.White, Skin.Line);
+                Thumbs.Show(hold, key, null, () => Painter.PreviewCached(Painter.PortraitGroup, key, 4, null, showing));
+                Ui.Label(card.transform, t.id, 4f, imageH + 5f, cardW - 8f, 16f, 12f, Skin.Cream, TextAlignmentOptions.Center);
+                Ui.Label(card.transform, (byHand ? T("手动 · ", "by hand · ") : "") + Workshop.SourceLabel(src), 4f, imageH + 20f, cardW - 8f, 14f, 10f, byHand ? Skin.Note : Skin.Text, TextAlignmentOptions.Center);
+                Ui.Clickable(card, () => { manageKey = t.id; Build(); });
+            }
+            if (shown.Count == 0) Ui.Label(c, T("没有符合的", "Nothing matches"), 0f, 200f, CW, 30f, 15f, Skin.Note, TextAlignmentOptions.Center);
+            if (pages > 1)
+            {
+                const float rowY = 388f, pagerW = 64f, pagerMid = 110f;
+                float px = (CW - pagerW * 2f - pagerMid) / 2f;
+                if (managePage > 0) Ui.Button(c, "<", px, rowY, pagerW, 32f, () => { managePage--; Build(); });
+                Ui.Label(c, (managePage + 1) + " / " + pages, px + pagerW, rowY, pagerMid, 32f, 16f, Skin.Cream, TextAlignmentOptions.Center);
+                if (managePage < pages - 1) Ui.Button(c, ">", px + pagerW + pagerMid, rowY, pagerW, 32f, () => { managePage++; Build(); });
+            }
+        }
+
+        // 一个键在各来源里的图：点哪张用哪个来源
+        private static void ManageOne(RectTransform c, string id, Workshop.Target root)
+        {
+            var cells = new List<Workshop.Target>();
+            foreach (Workshop.Target t in Workshop.Catalog.images ?? new List<Workshop.Target>())
+            {
+                if (t.id != id || t.key == null) continue;
+                ImageKey.Parse(t.key, out _, out _, out int number);
+                if (number == 0) cells.Add(t);   // 每个来源一张本体（来客按来源选，不分同来源的第几张）
+            }
+            cells.Sort((a, b) => a.src == ItemDefs.Game ? -1 : b.src == ItemDefs.Game ? 1 : string.CompareOrdinal(Workshop.SourceLabel(a.src), Workshop.SourceLabel(b.src)));
+            string now = SourceNow(id, root), chosen = Sources.Chosen(id);
+            Ui.Info(c, id, T("这个立绘键在各来源里的图。点一张 = 指定这个键用那个来源（优先级最高，主来源也盖不过）。黄底是现在用的。", "This key's image in every source. Click one to use that source for this key. Yellow = in use."), 0f, 0f, 26f, true);
+            Ui.Label(c, chosen != null ? T("手动指定：", "By hand: ") + Workshop.SourceLabel(chosen) : T("跟随主来源 / 默认优先级", "Follows the main source"), CW - 420f, 0f, 420f, 26f, 13f, Skin.Note, TextAlignmentOptions.MidlineRight);
+            const int columns = 5, perPage = 10;
+            const float gap = 8f, cellH = 170f, imageH = 130f;
+            float cellW = (CW - gap * (columns - 1)) / columns;
+            int pages = Mathf.Max(1, (cells.Count + perPage - 1) / perPage);
+            groupPage = Mathf.Clamp(groupPage, 0, pages - 1);
+            for (int i = groupPage * perPage; i < Mathf.Min(cells.Count, (groupPage + 1) * perPage); i++)
+            {
+                Workshop.Target t = cells[i];
+                int slot = i - groupPage * perPage;
+                bool current = t.src == now;
+                Image back = Ui.Box(c, slot % columns * (cellW + gap), 32f + slot / columns * (cellH + 6f), cellW, cellH, current ? Skin.PanelOn : Skin.Panel, Color.white, true);
+                Image hold = Ui.Box(back.transform, 4f, 4f, cellW - 8f, imageH, Skin.White, Skin.Line);
+                Thumbs.Show(hold, t.key, null, () => Painter.PreviewCached(Painter.PortraitGroup, t.key, 4, null, showing));
+                Ui.Label(back.transform, Workshop.SourceLabel(t.src), 4f, imageH + 8f, cellW - 8f, 18f, 12f, current ? Skin.Cream : Skin.Text, TextAlignmentOptions.Center);
+                if (t.src == chosen) Ui.Label(back.transform, T("手动指定", "by hand"), 4f, imageH + 26f, cellW - 8f, 14f, 10f, Skin.Note, TextAlignmentOptions.Center);
+                Ui.Clickable(back, () =>
+                {
+                    Sources.ChooseFor(id, t.src);
+                    Say(id + T(" 指定用 ", " uses ") + Workshop.SourceLabel(t.src) + T("。", "."));
+                    Build();
+                });
+            }
+            const float rowY = 388f, pagerW = 64f, pagerMid = 110f;
+            Ui.Button(c, T("返回", "Back"), 0f, rowY, 96f, 32f, () => { manageKey = null; groupPage = 0; Build(); }, false, 16f);
+            if (chosen != null) Ui.Button(c, T("跟随主来源", "Follow main"), 106f, rowY, 130f, 32f, () => { Sources.ChooseFor(id, null); Say(id + T(" 不再单独指定。", " follows the main source again.")); Build(); }, false, 14f);
+            if (pages > 1)
+            {
+                float px = (CW - pagerW * 2f - pagerMid) / 2f;
+                if (groupPage > 0) Ui.Button(c, "<", px, rowY, pagerW, 32f, () => { groupPage--; Build(); });
+                Ui.Label(c, (groupPage + 1) + " / " + pages, px + pagerW, rowY, pagerMid, 32f, 16f, Skin.Cream, TextAlignmentOptions.Center);
+                if (groupPage < pages - 1) Ui.Button(c, ">", px + pagerW + pagerMid, rowY, pagerW, 32f, () => { groupPage++; Build(); });
+            }
         }
 
         // ── 目标：给已有的立绘 / 道具贴标签 ──
@@ -235,60 +509,66 @@ namespace TextureExtend
             int pages = Mathf.Max(1, (shown.Count + PerPage - 1) / PerPage);
             page = Mathf.Clamp(page, 0, pages - 1);
 
-            // 左：筛选 + 总览（版式照 Lune 2026-11-17 的图例：4 列 3 行）
-            Ui.Info(c, items ? T("选一个道具", "Pick an item") : T("选一张立绘", "Pick a portrait"), T("框架认得的全部" + ScopeName + "。目录是上次在店面里存下的；立绘的缩略图来自框架的道具图缓存，没缓存的只显示名字。", "Everything the framework knows. The catalog was saved the last time you were in the shop."), 0f, 0f, 26f, true);
-            Ui.Label(c, shown.Count + " / " + all.Count, LeftW - 120f, 0f, 120f, 26f, 13f, Skin.Note, TextAlignmentOptions.MidlineRight);
-            var drops = new List<Action<float, float>>();
-            if (sourceIds.Count > 1) drops.Add((x, w) => Ui.Dropdown(c, sources, sourceAt, x, 32f, w, 28f, i => { sourceAt = i; page = 0; Build(); }));
-            if (items && typeIds.Count > 0) drops.Add((x, w) => Ui.Dropdown(c, types, typeAt, x, 32f, w, 28f, i => { typeAt = i; page = 0; Build(); }));
-            drops.Add((x, w) => Ui.Dropdown(c, filters, filterAt, x, 32f, w, 28f, i => { filterAt = i; page = 0; Build(); }));
-            float searchW = drops.Count > 2 ? 130f : 176f, dropW = (LeftW - searchW - drops.Count * 8f) / drops.Count;
-            for (int i = 0; i < drops.Count; i++) drops[i](i * (dropW + 8f), dropW);
-            // 搜索框：回车生效（打字时不重摆窗口，否则会丢焦点）
-            Ui.Input(c, items ? T("搜 名字 / ID", "Search name / id") : T("搜 ID", "Search id"), search, LeftW - searchW, 32f, searchW, 28f, null)
-                .onSubmit.AddListener(v => { search = v ?? ""; page = 0; Build(); });
-            const float gap = 8f, cardH = 100f, thumb = 50f;
-            float cardW = (LeftW - gap * (Columns - 1)) / Columns;
-            for (int i = page * PerPage; i < Mathf.Min(shown.Count, (page + 1) * PerPage); i++)
+            // ClaudeNote: 0.9.7 选了一张立绘之后，左边整块换成这张立绘的组（Lune 2026-11-18）；左下角“返回”回到总览
+            Workshop.Target sel = all.Find(t => t.id == picked);
+            if (!items && sel != null) Group(c, sel);
+            else
             {
-                Workshop.Target t = shown[i];
-                int slot = i - page * PerPage, mine = Workshop.Mine(scope, t.id).Count;
-                string title = items && !string.IsNullOrEmpty(t.name) ? t.name : t.id;   // 道具显示游戏里的名字
-                Image card = Ui.Box(c, slot % Columns * (cardW + gap), 68f + slot / Columns * (cardH + 6f), cardW, cardH, t.id == picked ? Skin.PanelOn : Skin.Panel, Color.white, true);
-                // 立绘缩略图一律按完整身份（来源:图ID）取：筛了来源就是那个来源的图，否则是现在选中的那张
-                string imageKey = items ? null : source != null && perSource ? Workshop.ImageOf(t.id, source)?.key ?? t.key ?? t.id : t.key ?? t.id;
-                Sprite image = items ? ItemDefs.Sprite(t.atlas, t.sprite, t.modSprite) ?? ItemDefs.Sprite(t.id) : Painter.Preview(Painter.PortraitGroup, imageKey, 4, null, showing);
-                if (image != null)
+                // 左：筛选 + 总览（版式照 Lune 2026-11-17 的图例：4 列 3 行）
+                Ui.Info(c, items ? T("选一个道具", "Pick an item") : T("选一张立绘", "Pick a portrait"), T("框架认得的全部" + ScopeName + "。目录是上次在店面里存下的。立绘显示的是整张原图的小样，读到了才换上；标题界面读不到的（游戏原图、别的 mod 已载入的贴图）用道具图缓存里现成的顶替，没有就只显示名字。", "Everything the framework knows. Portraits show a small copy of the whole image once it is read; what cannot be read on the title screen falls back to a cached item image, or to the name."), 0f, 0f, 26f, true);
+                Ui.Label(c, shown.Count + " / " + all.Count, LeftW - 120f, 0f, 120f, 26f, 13f, Skin.Note, TextAlignmentOptions.MidlineRight);
+                var drops = new List<Action<float, float>>();
+                if (sourceIds.Count > 1) drops.Add((x, w) => Ui.Dropdown(c, sources, sourceAt, x, 32f, w, 28f, i => { sourceAt = i; page = 0; Build(); }));
+                if (items && typeIds.Count > 0) drops.Add((x, w) => Ui.Dropdown(c, types, typeAt, x, 32f, w, 28f, i => { typeAt = i; page = 0; Build(); }));
+                drops.Add((x, w) => Ui.Dropdown(c, filters, filterAt, x, 32f, w, 28f, i => { filterAt = i; page = 0; Build(); }));
+                float searchW = drops.Count > 2 ? 130f : 176f, dropW = (LeftW - searchW - drops.Count * 8f) / drops.Count;
+                for (int i = 0; i < drops.Count; i++) drops[i](i * (dropW + 8f), dropW);
+                // 搜索框：回车生效（打字时不重摆窗口，否则会丢焦点）
+                Ui.Input(c, items ? T("搜 名字 / ID", "Search name / id") : T("搜 ID", "Search id"), search, LeftW - searchW, 32f, searchW, 28f, null)
+                    .onSubmit.AddListener(v => { search = v ?? ""; page = 0; Build(); });
+                const float gap = 8f, cardH = 100f, thumb = 50f;
+                float cardW = (LeftW - gap * (Columns - 1)) / Columns;
+                for (int i = page * PerPage; i < Mathf.Min(shown.Count, (page + 1) * PerPage); i++)
                 {
-                    Image img = Ui.Box(card.transform, (cardW - thumb) / 2f, 6f, thumb, thumb, image, Color.white);
-                    img.type = Image.Type.Simple;
-                    img.preserveAspect = true;
+                    Workshop.Target t = shown[i];
+                    int slot = i - page * PerPage, mine = Workshop.Mine(scope, t.id).Count;
+                    string title = items && !string.IsNullOrEmpty(t.name) ? t.name : t.id;   // 道具显示游戏里的名字
+                    Image card = Ui.Box(c, slot % Columns * (cardW + gap), 68f + slot / Columns * (cardH + 6f), cardW, cardH, t.id == picked ? Skin.PanelOn : Skin.Panel, Color.white, true);
+                    // 立绘缩略图一律按完整身份（来源:图ID）取：筛了来源就是那个来源的图，否则是现在选中的那张
+                    string imageKey = items ? null : source != null && perSource ? Workshop.ImageOf(t.id, source)?.key ?? t.key ?? t.id : t.key ?? t.id;
+                    Sprite image = items ? ItemDefs.Sprite(t.atlas, t.sprite, t.modSprite) ?? ItemDefs.Sprite(t.id) : null;
+                    if (image != null)
+                    {
+                        Image img = Ui.Box(card.transform, (cardW - thumb) / 2f, 6f, thumb, thumb, image, Color.white);
+                        img.type = Image.Type.Simple;
+                        img.preserveAspect = true;
+                    }
+                    else
+                    {
+                        Image blank = Ui.Box(card.transform, (cardW - thumb) / 2f, 6f, thumb, thumb, Skin.White, Skin.Line);
+                        Ui.Label(blank.transform, title.Length >= 2 ? title.Substring(0, 2).ToUpperInvariant() : title, 0f, 0f, thumb, thumb, 22f, Skin.TealDim, TextAlignmentOptions.Center, true);
+                        if (!items) Thumbs.Show(blank, imageKey, null, () => Painter.PreviewCached(Painter.PortraitGroup, imageKey, 4, null, showing));
+                    }
+                    Ui.Label(card.transform, title, 4f, 58f, cardW - 8f, 20f, 13f, Skin.Cream, TextAlignmentOptions.Center);
+                    string under = "";
+                    if (!items && Workshop.Current.join.TryGetValue(t.id, out string joined)) under = "→ " + joined;   // 归到了别的 root_key 名下
+                    if (mine > 0) under += (under.Length > 0 ? "  " : "") + "+" + mine;
+                    if (under.Length > 0) Ui.Label(card.transform, under, 4f, 78f, cardW - 8f, 16f, 11f, Skin.Note, TextAlignmentOptions.Center);
+                    Ui.Clickable(card, () => { picked = t.id; addAt = 0; rootTyping = null; groupPage = 0; Build(); });
                 }
-                else
+                // 翻页放在总览下面，居中；只有一页时不画，到头的那一侧不画
+                if (pages > 1)
                 {
-                    Image blank = Ui.Box(card.transform, (cardW - thumb) / 2f, 6f, thumb, thumb, Skin.White, Skin.Line);
-                    Ui.Label(blank.transform, title.Length >= 2 ? title.Substring(0, 2).ToUpperInvariant() : title, 0f, 0f, thumb, thumb, 22f, Skin.TealDim, TextAlignmentOptions.Center, true);
+                    const float pagerY = 388f, pagerW = 64f, pagerMid = 110f;
+                    float px = (LeftW - pagerW * 2f - pagerMid) / 2f;
+                    if (page > 0) Ui.Button(c, "<", px, pagerY, pagerW, 32f, () => { page--; Build(); });
+                    Ui.Label(c, (page + 1) + " / " + pages, px + pagerW, pagerY, pagerMid, 32f, 16f, Skin.Cream, TextAlignmentOptions.Center);
+                    if (page < pages - 1) Ui.Button(c, ">", px + pagerW + pagerMid, pagerY, pagerW, 32f, () => { page++; Build(); });
                 }
-                Ui.Label(card.transform, title, 4f, 58f, cardW - 8f, 20f, 13f, Skin.Cream, TextAlignmentOptions.Center);
-                string under = "";
-                if (!items && Workshop.Current.join.TryGetValue(t.id, out string joined)) under = "→ " + joined;   // 归到了别的 root_key 名下
-                if (mine > 0) under += (under.Length > 0 ? "  " : "") + "+" + mine;
-                if (under.Length > 0) Ui.Label(card.transform, under, 4f, 78f, cardW - 8f, 16f, 11f, Skin.Note, TextAlignmentOptions.Center);
-                Ui.Clickable(card, () => { picked = t.id; addAt = 0; rootTyping = null; Build(); });
+                if (shown.Count == 0) Ui.Label(c, T("没有符合的", "Nothing matches"), 0f, 200f, LeftW, 30f, 15f, Skin.Note, TextAlignmentOptions.Center);
             }
-            // 翻页放在总览下面，居中；只有一页时不画，到头的那一侧不画
-            if (pages > 1)
-            {
-                const float pagerY = 388f, pagerW = 64f, pagerMid = 110f;
-                float px = (LeftW - pagerW * 2f - pagerMid) / 2f;
-                if (page > 0) Ui.Button(c, "<", px, pagerY, pagerW, 32f, () => { page--; Build(); });
-                Ui.Label(c, (page + 1) + " / " + pages, px + pagerW, pagerY, pagerMid, 32f, 16f, Skin.Cream, TextAlignmentOptions.Center);
-                if (page < pages - 1) Ui.Button(c, ">", px + pagerW + pagerMid, pagerY, pagerW, 32f, () => { page++; Build(); });
-            }
-            if (shown.Count == 0) Ui.Label(c, T("没有符合的", "Nothing matches"), 0f, 200f, LeftW, 30f, 15f, Skin.Note, TextAlignmentOptions.Center);
 
             // 右：选中的这一个
-            Workshop.Target sel = all.Find(t => t.id == picked);
             RectTransform r = Ui.Rect(c, "right", RightX, 0f, RightW, CH);
             if (sel == null) { Ui.Label(r, T("左边选一个。", "Pick one on the left."), 0f, 0f, RightW, 26f, 15f, Skin.Note); return; }
             bool named = items && !string.IsNullOrEmpty(sel.name) && sel.name != sel.id;
@@ -298,8 +578,6 @@ namespace TextureExtend
 
             const float inX = 14f, inW = RightW - 28f;
             float y = 36f;
-            // 立绘：预览区只剩这张图和它的差分候选（Lune 2026-11-17）
-            if (!items) { Preview(r, sel, inX, y, inW); y += 84f; }
 
             // 已有标签一览：自带的（只读）+ 我加的（青框，点一下摘掉）
             List<string> mineTags = Workshop.Mine(scope, sel.id);
@@ -389,36 +667,65 @@ namespace TextureExtend
 
         private static string rootTyping;   // root_key 输入框里正打着的字（没点“添加”之前）
 
-        // 预览：同一个 root_key 在各来源里的本体（不同来源自动并入同一组）+ 现在选中来源的差分候选（含归进来的立绘）。
-        //   缩略图来自道具图缓存，没缓存的只显示标签名。黄底 = 现在来客用的那张。
-        private static void Preview(RectTransform r, Workshop.Target sel, float x, float y, float w)
+        // ClaudeNote: 0.9.7 立绘的组（Lune 2026-11-18）：选了立绘之后左边整块显示——同一个 root_key 在各来源里的图（不同来源自动并入同一组，
+        //   同来源的第 2、3… 张也在）、现在选中来源的差分、归进这个组的其它立绘。都是整张原图的小样。黄底 = 现在来客用的那个来源。
+        //   之前这些挤在右边一排 56 像素的小格里，放不下的只显示“+N”。
+        private static int groupPage;
+        private const int GroupColumns = 4, GroupPerPage = 8;
+
+        private static void Group(RectTransform c, Workshop.Target sel)
         {
-            var cells = new List<KeyValuePair<string, string>>();   // (预览用的身份, 标签)
+            var cells = new List<KeyValuePair<string, string>>();   // (身份[#差分], 标签)
             List<Workshop.Target> images = Workshop.Catalog.images ?? new List<Workshop.Target>();
-            foreach (Workshop.Target t in images) if (t.id == sel.id && t.key != null) cells.Add(new KeyValuePair<string, string>(t.key, SourceName(t)));
+            foreach (Workshop.Target t in images)
+                if (t.id == sel.id && t.key != null)
+                {
+                    ImageKey.Parse(t.key, out _, out _, out int number);
+                    cells.Add(new KeyValuePair<string, string>(t.key, SourceName(t) + (number > 0 ? " · " + (number + 1) : "")));
+                }
             if (cells.Count == 0) cells.Add(new KeyValuePair<string, string>(sel.id, T("本体", "Base")));
-            if (sel.variants != null) foreach (string v in sel.variants) cells.Add(new KeyValuePair<string, string>(sel.id + "#" + v, Labels.Of(v)));
+            // 差分：每个来源自己的差分都列出来（标签 = 差分名 · 来源）；不属于任何来源的共享差分跟着现在选中的来源
+            var listed = new HashSet<string>();
+            foreach (Workshop.Target t in images)
+            {
+                if (t.id != sel.id || t.key == null || t.variants == null) continue;
+                foreach (string v in t.variants)
+                {
+                    cells.Add(new KeyValuePair<string, string>(t.key + "#" + v, Labels.Of(v) + " · " + SourceName(t)));
+                    if (t.key == sel.key) listed.Add(v);
+                }
+            }
+            if (sel.variants != null) foreach (string v in sel.variants) if (!listed.Contains(v)) cells.Add(new KeyValuePair<string, string>(sel.id + "#" + v, Labels.Of(v)));
             foreach (KeyValuePair<string, string> kv in Workshop.Current.join)
                 if (kv.Value == sel.id && (sel.variants == null || Array.IndexOf(sel.variants, PortraitLibrary.Normal(kv.Key)) < 0)) cells.Add(new KeyValuePair<string, string>(kv.Key, "→ " + kv.Key));
-            const float cell = 64f, thumb = 56f;
-            int fits = Mathf.Max(1, (int)(w / (cell + 4f)));
-            for (int i = 0; i < Mathf.Min(cells.Count, fits); i++)
+
+            Ui.Info(c, sel.id, T("这张立绘的组：各来源的图、现在选中来源的差分、归进这个组的其它立绘。显示的是整张原图。黄底是现在来客用的来源。", "This portrait's group: the image from every source, the variants of the selected source, and portraits joined to it. Whole images. Yellow = the source visitors use now."), 0f, 0f, 26f, true);
+            Ui.Label(c, cells.Count.ToString(), LeftW - 120f, 0f, 120f, 26f, 13f, Skin.Note, TextAlignmentOptions.MidlineRight);
+            const float gap = 8f, cellH = 170f, imageH = 126f;
+            float cellW = (LeftW - gap * (GroupColumns - 1)) / GroupColumns;
+            int pages = Mathf.Max(1, (cells.Count + GroupPerPage - 1) / GroupPerPage);
+            groupPage = Mathf.Clamp(groupPage, 0, pages - 1);
+            for (int i = groupPage * GroupPerPage; i < Mathf.Min(cells.Count, (groupPage + 1) * GroupPerPage); i++)
             {
                 string id = cells[i].Key;
-                int hash = id.IndexOf('#');
-                Sprite image = hash < 0 ? Painter.Preview(Painter.PortraitGroup, id, 4, null, showing) : Painter.Preview(Painter.PortraitGroup, id.Substring(0, hash), 4, id.Substring(hash + 1), showing);
-                bool current = ImageKey.SourceOf(id) == sel.src || (i == 0 && !ImageKey.Full(id));
-                float cx = x + i * (cell + 4f);
-                Image back = Ui.Box(r, cx, y, cell, thumb + 4f, current ? Skin.PanelOn : Skin.Panel, Color.white);
-                if (image != null)
-                {
-                    Image img = Ui.Box(back.transform, (cell - thumb) / 2f, 2f, thumb, thumb, image, Color.white);
-                    img.type = Image.Type.Simple;
-                    img.preserveAspect = true;
-                }
-                Ui.Label(r, cells[i].Value, cx, y + thumb + 6f, cell, 16f, 11f, current ? Skin.Cream : Skin.Text, TextAlignmentOptions.Center);
+                int hash = id.IndexOf('#'), slot = i - groupPage * GroupPerPage;
+                string key = hash < 0 ? id : id.Substring(0, hash), variant = hash < 0 ? null : id.Substring(hash + 1);
+                bool current = hash < 0 && (ImageKey.Full(key) ? key == sel.key : key == sel.id);
+                Image back = Ui.Box(c, slot % GroupColumns * (cellW + gap), 34f + slot / GroupColumns * (cellH + 6f), cellW, cellH, current ? Skin.PanelOn : Skin.Panel, Color.white);
+                Image hold = Ui.Box(back.transform, 4f, 4f, cellW - 8f, imageH, Skin.White, Skin.Line);
+                Thumbs.Show(hold, key, variant, () => Painter.PreviewCached(Painter.PortraitGroup, key, 4, variant, showing));
+                Ui.Label(back.transform, cells[i].Value, 4f, imageH + 8f, cellW - 8f, 18f, 12f, current ? Skin.Cream : Skin.Text, TextAlignmentOptions.Center);
+                if (current) Ui.Label(back.transform, T("来客现在用这张", "shown to visitors"), 4f, imageH + 26f, cellW - 8f, 14f, 10f, Skin.Note, TextAlignmentOptions.Center);
             }
-            if (cells.Count > fits) Ui.Label(r, "+" + (cells.Count - fits), x + w - 40f, y + 20f, 40f, 20f, 13f, Skin.Note, TextAlignmentOptions.MidlineRight);
+            const float rowY = 388f, pagerW = 64f, pagerMid = 110f;
+            Ui.Button(c, T("返回", "Back"), 0f, rowY, 96f, 32f, () => { picked = null; rootTyping = null; Build(); }, false, 16f);
+            if (pages > 1)
+            {
+                float px = (LeftW - pagerW * 2f - pagerMid) / 2f;
+                if (groupPage > 0) Ui.Button(c, "<", px, rowY, pagerW, 32f, () => { groupPage--; Build(); });
+                Ui.Label(c, (groupPage + 1) + " / " + pages, px + pagerW, rowY, pagerMid, 32f, 16f, Skin.Cream, TextAlignmentOptions.Center);
+                if (groupPage < pages - 1) Ui.Button(c, ">", px + pagerW + pagerMid, rowY, pagerW, 32f, () => { groupPage++; Build(); });
+            }
         }
 
         // root_key 自动匹配：完全一样的优先；否则开头一样的、再否则包含的，只有一个时就是它

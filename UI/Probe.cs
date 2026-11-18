@@ -9,7 +9,7 @@ using System.Text;
 using UnityEngine;
 using UnityEngine.U2D;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     internal static class Probe
     {

@@ -5,7 +5,7 @@
 using System;
 using UnityEngine;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     internal static class ExternalImages
     {
@@ -22,6 +22,10 @@ namespace TextureExtend
             return "file|" + modId + "|" + VersionOf(modId) + (string.IsNullOrEmpty(stamp) ? "" : "+" + stamp.Replace('|', '_')) + "|" + relativePath;
         }
         internal static string ResourceSig(string modId, string resource) { return "res|" + modId + "|" + VersionOf(modId) + "|" + resource; }
+        // ClaudeNote: 0.9.9 第三种：ext|模组ID|版本|资源名 —— 打包在【没启用】的 mod 的 DLL 里的图片。游戏没载入那个 DLL，框架读不到；
+        //   由伴生 mod（有文件权限）把 DLL 当文件读出那一段交过来（Painter.UseImageReader）。伴生 mod 没装 / 没启用时这类图读不到。
+        internal static string ExtSig(string modId, string resource) { return "ext|" + modId + "|" + VersionOf(modId) + "|" + resource; }
+        internal static Func<string, string, byte[]> Reader;   // (模组ID, 资源名) → PNG 字节
 
         private static string VersionOf(string modId)
         {
@@ -30,15 +34,20 @@ namespace TextureExtend
         }
 
         /// <summary>按身份串读出 PNG 的字节；读不到返回 null。</summary>
-        internal static byte[] Bytes(string sig)
+        internal static byte[] Bytes(string sig, bool listed = false)   // listed：工坊目录里列着的图，包这次没上架也读（只读、只为显示）
         {
             string[] p = (sig ?? "").Split(new[] { '|' }, 4);
             if (p.Length < 4) return null;
             byte[] bytes = null;
             if (p[0] == "file")
             {
-                if (!PackShelf.CanRead(p[1])) return null;   // 启用中的 mod，或架子上的包
+                if (!listed && !PackShelf.CanRead(p[1])) return null;   // 启用中的 mod，或架子上的包
                 bytes = ModHelper.ReadModFileBytes(p[1], p[3]);
+            }
+            else if (p[0] == "ext")
+            {
+                if (Reader == null || (!listed && !PackShelf.CanRead(p[1]))) return null;
+                bytes = Reader(p[1], p[3]);
             }
             else if (p[0] == "res")
             {

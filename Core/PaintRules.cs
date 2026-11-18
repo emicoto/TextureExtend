@@ -17,9 +17,9 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using TextureExtend.TagSystem;
+using ProbablyExtendFramework.TagSystem;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     public enum PaintTarget
     {
@@ -580,6 +580,7 @@ namespace TextureExtend
             Conditions.Remove(modId);
             DialogPlacement.Remove(modId);
             RootJoin.Remove(modId);
+            PortraitPools.Remove(modId);
         }
 
         /// <summary>只重算立绘衍生道具（来客到来 / 离开时本 mod 自动调）。</summary>

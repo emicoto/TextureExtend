@@ -2,7 +2,7 @@
 //   关门（打烊）之后 → 夜晚；起床、读档（读档总在早上）→ 白天。
 //   内置一条最低权重（−10）的规则：立绘或道具有 night 状态的，夜晚自动切过去；白天撤回。别的规则成立时它让路。
 //   对外：DayNight.IsNight（第 2 步的条件表达式也会用它）。
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     public static class DayNight
     {

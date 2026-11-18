@@ -10,7 +10,7 @@ using System;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     /// <summary>缓存的存放处。路径都是相对路径（ItemCache/…，用 / 分隔）。读不到返回 null。</summary>
     public interface ICacheStore

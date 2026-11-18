@@ -3,14 +3,16 @@
 //   入睡 → 收拢“用到的图”并写索引。调试按钮在 TextureExtend 调试面板（F9 的 Modding 面板里有入口）。
 using System;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     public sealed class Entry : IMod
     {
         private static ModLog log;
         internal static string Version { get; private set; } = "?";
         private bool enabled;
-        private static ConfigEntry<string> imageSize, dlcDeepSpace, lewdMood, visitorPortraits, dialogPlacement, hdRender, autoFit, beforeUninstall;
+        private static ConfigEntry<string> imageSize, dlcDeepSpace, lewdMood, visitorPortraits, visitorPools, dialogPlacement, hdRender, workshopKey, beforeUninstall;
+        private static ConfigEntry<bool> autoSize;
+        private static ConfigEntry<int> portraitScale;
         // ClaudeNote: 内置 DLC 示范注册表：深空娘化（Lune 2026-11-16 定：默认关闭，玩家在配置里手动开启才加载）
         private static bool assetsReady;
         private static bool localeReady;   // 可以问当前语言了（本 mod 资源载入事件起）
@@ -32,6 +34,7 @@ namespace TextureExtend
             HdRender.Install();
             // ClaudeNote: 0.6.0 游戏接触面：各模块登记自己的补丁 / 读数接口，然后逐个安装（装不上的只停那一项功能）
             PlanPort.Install();
+            PortraitPools.Install();
             DialogPlacement.Install();
             PickButtonHooks.Install();
             Ports.InstallAll();
@@ -50,6 +53,8 @@ namespace TextureExtend
             ModHook.OnShutterOpenedLate += Painter.RefreshAll;
             ModHook.OnShutterClosedLate += Painter.RefreshAll;
             ModHook.OnGameLoadedLate += RecheckAfterLoad;
+            ModHook.OnGameLoadedLate += Baker.RequestBurst;   // 1.0.0 集中预处理：读档后一次、入睡时一次
+            ModHook.OnGoingSleepEarly += Baker.RequestBurst;
             Baker.Launch();
         }
 
@@ -70,6 +75,8 @@ namespace TextureExtend
             ModHook.OnShutterOpenedLate -= Painter.RefreshAll;
             ModHook.OnShutterClosedLate -= Painter.RefreshAll;
             ModHook.OnGameLoadedLate -= RecheckAfterLoad;
+            ModHook.OnGameLoadedLate -= Baker.RequestBurst;
+            ModHook.OnGoingSleepEarly -= Baker.RequestBurst;
             // ClaudeNote: 0.6.1 自检：停用时把开着的窗口、挪过的对话框、调试开关一并收掉
             Notices.Reset();
             Picker.Close();
@@ -148,6 +155,18 @@ namespace TextureExtend
                 visitorPortraits.OnChanged += v => PlanPort.Enabled = v != "off";
             }
             PlanPort.Enabled = visitorPortraits.Value != "off";
+            if (visitorPools == null)
+            {
+                // ClaudeNote: 0.9.12 新立绘加入来客立绘池（Core/PortraitPools.cs）。默认开（Lune 2026-11-18）
+                visitorPools = cfg.Define("visitorPools", "on", "Display",
+                    () => Chinese ? "新立绘加入来客立绘池" : "Add new portraits to visitor pools",
+                    new[] { "on", "off" },
+                    () => Chinese
+                        ? "开：激活的立绘包里多出来的随机路人立绘（原版没有的新编号、“池名_任意”命名的、带 generic 标签的）会和原版的一起被抽到。只追加，原有的立绘怎么抽不变。关：只抽原版有的。要“来客等处按选中的来源显示立绘”开着才生效。"
+                        : "On: extra random-visitor portraits from active packs can be drawn along with the game's own. Off: only the game's own keys. Needs the option above to be on.");
+                visitorPools.OnChanged += v => PortraitPools.Enabled = v != "off";
+            }
+            PortraitPools.Enabled = visitorPools.Value != "off";
             if (dialogPlacement == null)
             {
                 // ClaudeNote: 0.9.5 选项是定义时就要给死的字符串，而定义发生在加载器 Awake 里——0.9.3 在这里问了当前语言，
@@ -173,18 +192,42 @@ namespace TextureExtend
                 hdRender.OnChanged += v => HdRender.Enabled = v != "off";
             }
             HdRender.Enabled = hdRender.Value != "off";
-            if (autoFit == null)
+            if (autoSize == null)
             {
-                // ClaudeNote: 0.6.0 立绘大小自适配（算法见 Core/FitMath.cs）
-                autoFit = cfg.Define("autoFit", "on", "Display",
-                    () => Chinese ? "立绘大小自动适配" : "Auto-fit portrait size",
-                    new[] { "on", "off" },
+                // ClaudeNote: 1.0.0 立绘大小两项（Lune 2026-11-18；替掉原来的 autoFit）：
+                //   自动大小 开 → 按自动算的结果（算法见 Core/FitMath.cs）；关 → 用下面滑杆的值。两项都只是“默认”：作者给包登记了显示大小的，按作者写的。
+                autoSize = cfg.Define("portraitAutoSize", true, "Display",
+                    () => Chinese ? "立绘自动大小" : "Auto portrait size",
                     () => Chinese
-                        ? "开：各立绘包留白不同，框架量出每个包里人物实际占画布的比例，把人调到和原版差不多高（最多缩小 25%、放大 10%，底边贴齐；立绘包自己写了大小的听它的）。关：只把画布对齐原版。"
-                        : "On: scale each portrait pack so its characters stand about as tall as vanilla ones (at most -25% / +10%, bottom aligned). Off: only match the canvas.");
-                autoFit.OnChanged += v => { Fit.Enabled = v != "off"; Display.Clear(); };
+                        ? "开：各立绘包留白不同，框架量出每个包里人物实际占画布的比例，把人调到和原版差不多高（最多缩小 25%、放大 10%，底边贴齐）。开着时下面的“立绘默认大小”不起作用。关：所有立绘包都按“立绘默认大小”的百分比显示。作者给包登记了显示大小的，两种情况下都按作者写的。"
+                        : "On: each portrait pack is scaled so its characters stand about as tall as vanilla ones; the size slider below is ignored. Off: every pack uses the slider. Packs whose author set a size keep it either way.");
+                autoSize.OnChanged += v => { Fit.Enabled = v; Fit.Changed(); };
+                portraitScale = cfg.Define("portraitScale", 100, "Display",
+                    () => Chinese ? "立绘默认大小（%）" : "Default portrait size (%)", 50, 150,
+                    () => Chinese
+                        ? "只在“立绘自动大小”关着时起作用：所有立绘包的图按这个百分比显示（100 = 画布和原版一样大，底边贴齐）。游戏原图不受影响；作者给包登记了显示大小的按作者写的。"
+                        : "Only used while auto portrait size is off: every portrait pack is shown at this percentage (100 = same canvas as vanilla, bottom aligned). Vanilla art and packs with an author-set size are not affected.");
+                portraitScale.OnChanged += v => { Fit.Manual = v / 100f; Fit.Changed(); };
             }
-            Fit.Enabled = autoFit.Value != "off";
+            Fit.Enabled = autoSize.Value;
+            Fit.Manual = portraitScale.Value / 100f;
+            if (workshopKey == null)
+            {
+                // ClaudeNote: 1.0.0 工坊热键可改（Lune 2026-11-18）。按键识别用游戏给 mod 的正式入口：游戏“选项”的按键设置里多一行，和原版改键同一套界面
+                //   （mod 自己的设置窗口没有按键识别控件）。键存在这里；这一项在 mod 设置里显示成一个文本框，也可以直接写键名。
+                workshopKey = cfg.Define("workshopKey", "PageUp", "Workshop",
+                    () => Chinese ? "贴图扩展工坊的热键" : "Workshop hotkey", null,
+                    () => Chinese
+                        ? "开 / 关贴图扩展工坊的键。推荐去游戏“选项”的按键设置里改（本框架那一栏，点一下再按想用的键）；这里显示的是键名，也可以直接写（Unity 的键名，如 PageUp、F6、Home；写 None = 不用热键）。"
+                        : "Key that opens the workshop. Change it in the game's Options > key bindings (this framework's section); the key name shown here can also be typed (Unity key names; None = no hotkey).");
+                workshopKey.OnChanged += v => Baker.Hotkey = ParseKey(v);
+                ModHelper.AddGameOptionSection(Painter.ModId, "keys", () => Chinese ? "大概是游戏扩展框架" : "Probably Extend Framework");
+                ModHelper.AddGameOptionKeyBind(Painter.ModId, "keys", "workshop", () => Chinese ? "打开贴图扩展工坊" : "Open the texture workshop",
+                    () => Baker.Hotkey,
+                    key => { Baker.Hotkey = key; workshopKey.Set(key.ToString()); cfg.Save(); },
+                    () => Chinese ? "标题界面和游戏里都能用。" : "Works on the title screen and in game.");
+            }
+            Baker.Hotkey = ParseKey(workshopKey.Value);
             if (beforeUninstall == null)
             {
                 // ClaudeNote: 0.6.2 卸载前清理的第二个入口：调试面板要在游戏目录放 dev.txt 才打得开，普通玩家从设置里也能执行
@@ -218,6 +261,11 @@ namespace TextureExtend
                 });
             }
             catch (Exception ex) { Warn("recheck after load not scheduled: " + ex.Message); }
+        }
+
+        private static UnityEngine.KeyCode ParseKey(string name)
+        {
+            return Enum.TryParse((name ?? "").Trim(), true, out UnityEngine.KeyCode key) ? key : UnityEngine.KeyCode.PageUp;
         }
 
         internal static bool Chinese
@@ -279,6 +327,7 @@ namespace TextureExtend
                 Info("auto probe " + (Probe.Auto ? "on" : "off"));
             });
             DevPanel.Add(Painter.ModId, page, Chinese ? "立绘来源设置" : "Portrait sources", SourceWindow.Open);
+            DevPanel.Add(Painter.ModId, page, Chinese ? "立绘池：各池追加了几张新立绘" : "Portrait pools: new portraits per pool", () => Info(PortraitPools.Report()));
             DevPanel.Add(Painter.ModId, page, Chinese ? "对话框位置：轮换预览" : "Dialogue box: cycle preview", CycleDialog);
             DevPanel.Add(Painter.ModId, page, Chinese ? "lewd_meme 好感立绘：立即判定（不等过夜）" : "lewd_meme affection: judge now", () =>
             {

@@ -2,7 +2,7 @@
 //   有的立绘包画面构图比较随意，原版位置会挡住眼睛嘴巴，所以让立绘包 / 立绘自己选对话框放哪。
 //   四档（0.9.3，Lune 2026-11-17 照截图上的红框重定）：
 //     vanilla  原版位置（立绘右侧、胸口高度）
-//     high     高：头顶右上方；名字牌翻到气泡下面（气泡在上、名字牌挂在它左下）
+//     high     高：头顶右上方；名字牌上下翻转、挂在气泡下面（气泡在上、名字牌在它左下）
 //     low      低：柜台高度、立绘左侧（气泡右端贴近立绘中线）；名字牌在气泡上面、靠右端
 //     mid      中：柜台高度、立绘正下方（气泡从立绘左侧起）；名字牌在气泡上面、靠左端
 //   原来的 top 改名 mid（表格 / 配置里写 top 仍然认）。中文也认：高 / 低 / 中 / 原版。
@@ -17,7 +17,7 @@ using System.Collections.Generic;
 using HarmonyLib;
 using UnityEngine;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     public static class DialogPlacement
     {
@@ -27,7 +27,7 @@ namespace TextureExtend
         private static readonly Dictionary<string, float[]> spots = new Dictionary<string, float[]>
         {
             { High, new[] { 1.05f, -1f, 0.38f } },
-            { Low, new[] { -0.35f, 1f, -0.48f } },
+            { Low, new[] { -0.35f, 1f, -0.39f } },   // 0.9.6 Lune：再往右约 20 像素
             { Mid, new[] { -0.65f, -1f, -0.84f } },
         };
 
@@ -124,38 +124,137 @@ namespace TextureExtend
                     baseOf = ui; baseX = bubble.localPosition.x; baseY = bubble.localPosition.y;
                     baseFlip = back != null ? back.localScale : Vector3.one;
                 }
-                if (where == Vanilla && !Moved(ui)) return;   // 本来就在原位
+                if (where == Vanilla && !Moved(ui) && shaped.Count == 0) return;   // 本来就在原位
                 float span = Mathf.Abs(VanillaShootY - baseY);
                 if (span < 1f) span = 100f;
-                // 先回原位，让名字牌按原版的相对位置跟上（ApplyBubbleScale），再按档位挪
+                // 先回原样（轴心、翻转、位置），让名字牌按原版的相对位置跟上（ApplyBubbleScale），再按档位挪
+                RestoreShape();
                 bubble.localPosition = new Vector3(baseX, baseY, bubble.localPosition.z);
                 bool mirror = false;
+                float edge = 0f;
                 if (spots.TryGetValue(where, out float[] spot))
                 {
-                    UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(bubble);   // 气泡宽度跟着台词变：先排好版再量
+                    UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(bubble);
                     float width = bubble.rect.width * bubble.localScale.x;
                     float left0 = baseX - bubble.pivot.x * width;                         // 原版位置时气泡的左端
-                    float edge = left0 + spot[2] * span;                                  // 目标：对齐的那一端放在这里
+                    edge = left0 + spot[2] * span;                                        // 目标：对齐的那一端放在这里
                     float left = spot[1] > 0f ? edge - width : edge;
                     bubble.localPosition = new Vector3(left + bubble.pivot.x * width, baseY + spot[0] * span, bubble.localPosition.z);
                     mirror = spot[1] > 0f;
                 }
                 ui.ApplyBubbleScale();   // 名字牌按原版的相对位置（气泡上面、靠左端）跟上
-                if (where == High)       // 名字牌翻到气泡下面：它的上沿贴着气泡的下沿，左端照旧
+                if (spot != null)
                 {
-                    float bottom = bubble.localPosition.y - bubble.pivot.y * bubble.rect.height * bubble.localScale.y;
-                    name.localPosition = new Vector3(name.localPosition.x, bottom - (1f - name.pivot.y) * name.rect.height * name.localScale.y, name.localPosition.z);
-                }
-                else if (where == Low)   // 名字牌挪到气泡右端（靠近立绘的那一端）
-                {
-                    float right = bubble.localPosition.x + (1f - bubble.pivot.x) * bubble.rect.width * bubble.localScale.x;
-                    name.localPosition = new Vector3(right - (1f - name.pivot.x) * name.rect.width * name.localScale.x, name.localPosition.y, name.localPosition.z);
+                    // ClaudeNote: 0.9.6 Lune：“高和低的对话框与名牌锚点得调整下；中正常，估计是锚点跟原版一致”——正是这样。
+                    //   气泡和名字牌的宽度是台词 / 名字排完版之后才定的（原版 DialogBubbleWidth 在 LateUpdate 里量），而这里在台词刚交给打字机时就摆位置，
+                    //   量到的是上一句的宽度：按右端对齐的 low、要量气泡高度的 high 都会摆歪，只有和原版同一端对齐的 mid 不受影响。
+                    //   改法不是“等排完版再摆一次”，而是把对齐的那一端设成轴心：之后宽度、行数怎么变，那一端都不动。
+                    float nameLeft = name.localPosition.x - name.pivot.x * name.rect.width * name.localScale.x;
+                    float bubbleBottom = bubble.localPosition.y - bubble.pivot.y * bubble.rect.height * bubble.localScale.y;
+                    float bubbleTop = bubbleBottom + bubble.rect.height * bubble.localScale.y;
+                    float nameHeight = name.rect.height * name.localScale.y;
+                    float gap = name.localPosition.y - name.pivot.y * nameHeight - bubbleTop;     // 原版：名字牌下沿到气泡上沿（负数 = 压着）
+                    PinX(bubble, mirror ? 1f : 0f, edge);
+                    if (where == High)
+                    {
+                        // 气泡下沿钉住（台词多行时往上长），名字牌上下翻过来挂在气泡下面：原来贴着气泡的那条边还是贴着气泡
+                        PinY(bubble, 0f, bubbleBottom);
+                        PinX(name, 0f, nameLeft);
+                        bool whole = FlipName(ui, name);
+                        float top = bubbleBottom - gap;
+                        name.localPosition = new Vector3(name.localPosition.x, whole ? top - name.pivot.y * nameHeight : top - (1f - name.pivot.y) * nameHeight, name.localPosition.z);
+                    }
+                    else if (where == Low) PinX(name, 1f, edge);   // 名字牌右端 = 气泡右端（靠近立绘的那一端）
+                    else PinX(name, 0f, nameLeft);
                 }
                 // low 档气泡在立绘左边：底图左右镜像，尖角朝右。只在“文字不是底图的子物体”时做（否则字也会反）
                 if (back != null && back != bubble && (ui.clientBubble.textfield == null || !ui.clientBubble.textfield.transform.IsChildOf(back)))
                     back.localScale = new Vector3(mirror ? -baseFlip.x : baseFlip.x, baseFlip.y, baseFlip.z);
             }
             catch (Exception) { }   // 绝不让异常进游戏的对话流程
+        }
+
+        // ---- 轴心与翻转：改过的东西逐件记下原样，下次摆位置之前先全部还原 ----
+        private struct Shape { internal RectTransform rect; internal Vector2 pivot; internal Vector3 scale, position; }
+        private static readonly List<Shape> shaped = new List<Shape>();
+
+        private static void Keep(RectTransform r)
+        {
+            foreach (Shape k in shaped) if (k.rect == r) return;
+            shaped.Add(new Shape { rect = r, pivot = r.pivot, scale = r.localScale, position = r.localPosition });
+        }
+
+        private static void RestoreShape()
+        {
+            for (int i = shaped.Count - 1; i >= 0; i--)
+            {
+                Shape k = shaped[i];
+                if (k.rect == null) continue;
+                k.rect.pivot = k.pivot; k.rect.localScale = k.scale; k.rect.localPosition = k.position;
+            }
+            shaped.Clear();
+        }
+
+        // 把这一端设成轴心并放到指定位置：之后宽 / 高怎么变，这一端不动
+        private static void PinX(RectTransform r, float pivotX, float x)
+        {
+            Keep(r);
+            r.pivot = new Vector2(pivotX, r.pivot.y);
+            r.localPosition = new Vector3(x, r.localPosition.y, r.localPosition.z);
+        }
+
+        private static void PinY(RectTransform r, float pivotY, float y)
+        {
+            Keep(r);
+            r.pivot = new Vector2(r.pivot.x, pivotY);
+            r.localPosition = new Vector3(r.localPosition.x, y, r.localPosition.z);
+        }
+
+        // 在父物体的框里上下镜像一个子物体的位置（flip = 连图形一起翻；不翻 = 只换位置，字保持正的）
+        private static void MirrorY(RectTransform child, RectTransform parent, bool flip)
+        {
+            Keep(child);
+            float h = child.rect.height * Mathf.Abs(child.localScale.y);
+            float center = child.localPosition.y + (0.5f - child.pivot.y) * h * Mathf.Sign(child.localScale.y);
+            float mirrored = 2f * (0.5f - parent.pivot.y) * parent.rect.height - center;
+            Vector3 sc = child.localScale;
+            if (flip) sc.y = -sc.y;
+            child.localScale = sc;
+            child.localPosition = new Vector3(child.localPosition.x, mirrored - (0.5f - child.pivot.y) * h * Mathf.Sign(sc.y), child.localPosition.z);
+        }
+
+        // 原地上下翻一个物体的图形（占的位置不变）。
+        // ClaudeNote: 0.9.13 Lune 的截图：高档的名字掉到牌子下面去了。原来的做法是“翻转 + 挪位置补偿轴心”，
+        //   但名字牌里的字是自动排版摆的：排版每次重排都按轴心把它放回去，我挪的那一下就没了；字的轴心在上沿，翻转后整行就甩到了牌子外面。
+        //   改成先把轴心移到正中（占的位置不变），再翻：绕正中翻不需要补偿位置，排版怎么重排它都在原地。
+        private static void FlipInPlace(RectTransform r)
+        {
+            Keep(r);
+            float shift = (0.5f - r.pivot.y) * r.rect.height * r.localScale.y;
+            r.pivot = new Vector2(r.pivot.x, 0.5f);
+            r.localPosition = new Vector3(r.localPosition.x, r.localPosition.y + shift, r.localPosition.z);
+            Vector3 sc = r.localScale;
+            r.localScale = new Vector3(sc.x, -sc.y, sc.z);
+        }
+
+        // ClaudeNote: 0.9.6 名字牌上下翻转（Lune：“high 那个得上下翻转下那个名牌”，0.9.3 只挪了位置没翻图）。
+        //   底图翻过来，字不翻、但在牌子里的位置跟着上下镜像（牌子的留白是上下不对称的）。
+        //   底图就在名字牌本体上：整个牌子翻（返回 true，调用方按翻转后的上沿算位置），里面的字各自原地翻回来；
+        //   底图是子物体：只翻它，其余子物体（字）换到镜像位置。
+        private static bool FlipName(DialogUIManager ui, RectTransform name)
+        {
+            RectTransform image = ui.clientNameBubbleImage != null ? ui.clientNameBubbleImage.transform as RectTransform : null;
+            if (image == null || image == name)
+            {
+                Keep(name);
+                Vector3 sc = name.localScale;
+                name.localScale = new Vector3(sc.x, -Mathf.Abs(sc.y), sc.z);
+                foreach (TMPro.TMP_Text t in name.GetComponentsInChildren<TMPro.TMP_Text>(true)) FlipInPlace(t.rectTransform);
+                return true;
+            }
+            foreach (Transform child in name)
+                if (child is RectTransform r) MirrorY(r, name, r == image);
+            return false;
         }
 
         // ClaudeNote: 0.6.0 补丁经 Ports 逐个安装；三个里任何一个装不上，位置补丁整体不动原版（Place 里检查）
@@ -193,6 +292,7 @@ namespace TextureExtend
                 if (ui != null && ui.clientBubble != null && !GameIsPlacing() && Moved(ui))
                 {
                     Transform bubble = ui.clientBubble.transform;
+                    RestoreShape();
                     bubble.localPosition = new Vector3(baseX, baseY, bubble.localPosition.z);
                     if (ui.clientBubble.backgroundImage != null && ui.clientBubble.backgroundImage.transform != bubble) ui.clientBubble.backgroundImage.transform.localScale = baseFlip;
                     ui.ApplyBubbleScale();

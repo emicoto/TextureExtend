@@ -11,7 +11,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     internal static class LewdMemeCompat
     {

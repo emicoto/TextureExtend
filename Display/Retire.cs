@@ -16,7 +16,7 @@ using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     public static partial class Painter
     {

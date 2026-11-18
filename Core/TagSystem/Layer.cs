@@ -12,7 +12,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace TextureExtend.TagSystem
+namespace ProbablyExtendFramework.TagSystem
 {
     /// <summary>标签层里的一条登记。用 Regist.Tag(...)（或 Painter.Tag）创建，链式补全。</summary>
     public sealed class TagDef

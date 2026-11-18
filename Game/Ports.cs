@@ -9,7 +9,7 @@ using System.Reflection;
 using System.Text;
 using HarmonyLib;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     internal static class Ports
     {

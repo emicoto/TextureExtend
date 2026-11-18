@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using Newtonsoft.Json;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     /// <summary>全局旗标：mod 写、表格的 flag:名字 读。存在 ModData（跨存档通用，不写进存档）。</summary>
     public static class Flags
@@ -29,7 +29,7 @@ namespace TextureExtend
                         if (loaded != null) foreach (var kv in loaded) values[kv.Key] = kv.Value;
                     }
                 }
-                catch (Exception ex) { TextureExtend.Entry.Warn("flags not read: " + ex.Message); }
+                catch (Exception ex) { ProbablyExtendFramework.Entry.Warn("flags not read: " + ex.Message); }
                 return values;
             }
         }
@@ -54,7 +54,7 @@ namespace TextureExtend
             if (!dirty || values == null) return;
             dirty = false;
             try { ModHelper.WriteModDataFileText(Painter.ModId, File, JsonConvert.SerializeObject(values, Formatting.Indented)); }
-            catch (Exception ex) { TextureExtend.Entry.Warn("flags not saved: " + ex.Message); }
+            catch (Exception ex) { ProbablyExtendFramework.Entry.Warn("flags not saved: " + ex.Message); }
         }
     }
 

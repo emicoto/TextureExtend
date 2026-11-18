@@ -1,16 +1,16 @@
 // ClaudeNote: 0.7.1 TagSystem.Regist——给外部 mod 的注册入口（Lune 2026-11-17 起草的结构）。只转发，不存状态：
 //   标签库在 PortraitTags / ItemTags，群组与层级在 Layer。表格（TextureExtend.csv）的 tag / faction 行和这里的方法一一对应。
-//   用法（mod 里 using TextureExtend.TagSystem;）：
+//   用法（mod 里 using ProbablyExtendFramework.TagSystem;）：
 //     Regist.Tag(modId, PaintTarget.Portrait, "mutant_cat").Group("mutant").Under("lower").With("female").Without("aug");
 //     Regist.Tag(modId, PaintTarget.StaticItem, "*").Group("streetfood").With("food");      // id 写 * = 符合条件的全部进组
 //     Regist.Faction("Mutant", "mutant");                     // 立绘字段 femaleMutant3 识别为 mutant 派系
 //     Regist.Library(PaintTarget.StaticItem, "CURSED");       // 往道具扩展标签库里加一个基础标签
 //     Regist.Pool(PaintTarget.Portrait, "lower", "female");   // 取池子
 //     Regist.Remove(modId);                                   // OnDisable 里撤掉自己登记的群组
-//   注意命名空间是 TextureExtend.TagSystem：游戏自己有一个全局的 TagSystem 类，顶层命名空间不能同名。
+//   注意命名空间是 ProbablyExtendFramework.TagSystem：游戏自己有一个全局的 TagSystem 类，顶层命名空间不能同名。
 using System.Collections.Generic;
 
-namespace TextureExtend.TagSystem
+namespace ProbablyExtendFramework.TagSystem
 {
     public static class Regist
     {

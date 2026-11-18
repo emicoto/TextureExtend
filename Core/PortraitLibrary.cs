@@ -12,9 +12,9 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
-using TextureExtend.TagSystem;
+using ProbablyExtendFramework.TagSystem;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     /// <summary>一张立绘。</summary>
     public sealed class Portrait
@@ -44,7 +44,7 @@ namespace TextureExtend
 
         /// <summary>只有没激活的候选素材提供这张（订阅了没启用、也没在架子上激活的包）。这种立绘不进自动的池子、不预处理，
         /// 只在选图窗口和工坊里看得到，由玩家点名用。</summary>
-        public bool CandidateOnly => candidates.TrueForAll(c => !TextureExtend.Sources.Active(c.source));
+        public bool CandidateOnly => candidates.TrueForAll(c => !ProbablyExtendFramework.Sources.Active(c.source));
 
         internal Candidate CandidateOf(string source) { return candidates.Find(c => c.source == source); }
 
@@ -150,6 +150,16 @@ namespace TextureExtend
         {
             Registration r = FileRegistration(sourceId, id, modId, relativePath, variant, tags);
             if (r != null) Add(r);
+        }
+
+        /// <summary>登记一张打包在【没启用】的 mod 的 DLL 里的立绘（0.9.9；字节由伴生 mod 的读取器给，见 ExternalImages.ExtSig）。</summary>
+        internal static void RegisterEmbedded(string sourceId, string id, string modId, string resource, string variant)
+        {
+            Registration r = FileRegistration(sourceId, id, modId, resource, variant, Array.Empty<string>());
+            if (r == null) return;
+            string sig = r.fileSig = ExternalImages.ExtSig(modId, resource);
+            r.sprite = () => ExternalImages.Get(sig);
+            Add(r);
         }
 
         // ClaudeNote: 0.9.1 本地来源（Lune 2026-11-17：像 ItemPortraitHD 那样，玩家自己把图塞进指定文件夹就自动加载）。
@@ -407,7 +417,7 @@ namespace TextureExtend
         public static string Pick(string id, string owner = null)
         {
             Portrait p = Get(id);
-            Candidate c = p != null ? TextureExtend.Sources.Choose(p, owner) : null;
+            Candidate c = p != null ? ProbablyExtendFramework.Sources.Choose(p, owner) : null;
             return c != null ? ImageKey.Make(c.source, id) : null;
         }
 
@@ -425,6 +435,15 @@ namespace TextureExtend
                 return shared;
             }
             return null;
+        }
+
+        /// <summary>这个来源自己给这张立绘带的差分名（不含不属于任何来源的共享差分）。key 要写明来源；同来源的第 2、3… 张没有自己的差分。</summary>
+        public static List<string> VariantsAt(string key)
+        {
+            var list = new List<string>();
+            if (Locate(key, out _, out Candidate c, out int number) && number == 0 && c.variants != null) list.AddRange(c.variants.Keys);
+            list.Sort(string.CompareOrdinal);
+            return list;
         }
 
         /// <summary>这张图（写明来源的）在这个状态下有没有图。来源自己的差分 + 不属于任何来源的共享差分。</summary>
@@ -496,6 +515,7 @@ namespace TextureExtend
         {
             SpriteDict current = Ready ? SpriteDict.Instance : null;
             if (!dirty && ReferenceEquals(current, builtFor)) return;
+            float started = Health.Now;
             dirty = false;
             builtFor = current;
             work = new Dictionary<string, Portrait>();
@@ -509,7 +529,7 @@ namespace TextureExtend
                 Apply(EmbeddedImages());                                      // 0.8.4 打包在启用中的 mod 的 DLL 里的图
                 Apply(registrations);
                 Layer.ApplyPortraits(work);                                   // 第 3 步：组标签（来源选择可以按组，所以排在选来源之前）
-                foreach (Portrait p in work.Values) Activate(p, TextureExtend.Sources.Choose(p));
+                foreach (Portrait p in work.Values) Activate(p, ProbablyExtendFramework.Sources.Choose(p));
                 foreach (Portrait p in work.Values)                              // 排序键只在重建时算一次
                 {
                     p.sortNumber = PortraitTags.NumberOf(p.Field);
@@ -517,10 +537,14 @@ namespace TextureExtend
                 }
                 portraits = work;
                 perMod = workMod;
+                Builds++;
             }
             catch (Exception ex) { Health.Report("portrait library rebuild (previous table kept)", ex); }
-            finally { work = null; workMod = null; }
+            finally { work = null; workMod = null; Health.Took("portrait library rebuild", started); }
         }
+
+        /// <summary>立绘库重建过几次（跟着立绘库走的缓存用它判断过没过期）。</summary>
+        internal static int Builds { get; private set; }
 
         private static Dictionary<string, Portrait> work;   // 只在重建过程中有值
         private static Dictionary<string, int> workMod;
@@ -631,35 +655,92 @@ namespace TextureExtend
             string modId = mod.Manifest.ID;
             string[] names = mod.Assembly.GetManifestResourceNames();
             Array.Sort(names, StringComparer.Ordinal);   // R18Full 排在 R18Half 前面：全身当本体、半身当第 2 张
-            Dictionary<string, List<string>> byName = Originals.KeysByName();
-            foreach (string resource in names)
+            foreach (KeyValuePair<string, string[]> t in ResourceTargets(names, stem => Originals.Get(stem) != null || work.ContainsKey(stem)))
             {
-                if (!resource.EndsWith(".png", StringComparison.OrdinalIgnoreCase)) continue;
-                string stem = resource.Substring(0, resource.Length - 4);
-                stem = stem.Substring(Math.Max(stem.LastIndexOf('/'), stem.LastIndexOf('.')) + 1);
-                if (stem.Length == 0) continue;
-                string sig = ExternalImages.ResourceSig(modId, resource);
+                string sig = ExternalImages.ResourceSig(modId, t.Key), source = SubSource(modId, t.Value[2]);
                 Func<Sprite> load = () => ExternalImages.Get(sig);
-                if (Originals.Get(stem) != null || work.ContainsKey(stem))
-                {
-                    into.Add(new Registration { source = modId, id = stem, sprite = load, tags = Array.Empty<string>(), external = true, fileSig = sig });
-                    continue;
-                }
-                if (PortraitTags.TryStructure(stem, out string field, out string variant) && stem.StartsWith(field, StringComparison.Ordinal))
-                {
-                    into.Add(variant.Length == 0
-                        ? new Registration { source = modId, id = field, sprite = load, tags = Array.Empty<string>(), external = true, fileSig = sig }
-                        : new Registration { source = modId, id = field, variant = variant, sprite = load, external = true, fileSig = sig });
-                    continue;
-                }
-                string named = stem;
-                int dash = stem.LastIndexOf('-');
-                if (!byName.ContainsKey(named) && dash > 0 && int.TryParse(stem.Substring(dash + 1), out _)) named = stem.Substring(0, dash);
-                // 几张原图同名时（游戏把 femaleLower1 和 augLLFemale1 切自同一张图，名字都叫 femaleLower_0）分不出这张是给谁的：不收，
-                //   这几个键由“其他 mod 写进表的”来源（对方 mod 自己按它的表写进去的那张）提供，不会配错。
-                if (!byName.TryGetValue(named, out List<string> keys) || keys.Count != 1) continue;
-                into.Add(new Registration { source = modId, id = keys[0], sprite = load, tags = Array.Empty<string>(), external = true, fileSig = sig });
+                into.Add(t.Value[1].Length == 0
+                    ? new Registration { source = source, id = t.Value[0], sprite = load, tags = Array.Empty<string>(), external = true, fileSig = sig }
+                    : new Registration { source = source, id = t.Value[0], variant = t.Value[1], sprite = load, external = true, fileSig = sig });
             }
+        }
+
+        // 一批资源名（已排序）→ (资源名, { 立绘键, 差分 })，按资源名的先后。
+        // ClaudeNote: 0.9.10 同一张原图挂在几个键上的（maleScav1 / miner1）：包里给了其中一个键的图、没单独给另一个的，另一个也用这张——
+        //   这类包启用时是按“运行时贴图名”换图的，本来就两个键一起换；之前框架只认到文件名对应的那一个键。
+        // ClaudeNote: 0.9.12 子来源（Lune 2026-11-18：白蛇 R18 包的全身 / 半身两版）。同一个名字出现在两个以上的顶层文件夹里（R18Full/x.png、R18Half/x.png）
+        //   = 这个包带着几套完整的图。之前登记成同一来源下同一张立绘的第 1、2 张，来客永远只用第 1 张，另一套选不到。
+        //   现在每个文件夹算一个子来源（来源名 = 包ID.文件夹名），在来源一览里各占一行，可以分别设为主来源 / 逐张指定。只有一套图的包不受影响。
+        //   每项 = (资源名, { 立绘键, 差分, 子来源的文件夹名或空 })
+        private static List<KeyValuePair<string, string[]>> ResourceTargets(IList<string> sortedNames, Func<string, bool> known)
+        {
+            var list = new List<KeyValuePair<string, string[]>>();
+            Dictionary<string, List<string>> byName = Originals.KeysByName();
+            var folders = new Dictionary<string, string>();   // 立绘|差分 → 第一次见到它时所在的文件夹
+            bool split = false;
+            foreach (string resource in sortedNames)
+            {
+                if (!ResourceTarget(resource, byName, known, out string id, out string variant)) continue;
+                int slash = resource.IndexOf('/');
+                string folder = slash > 0 ? resource.Substring(0, slash) : "";
+                list.Add(new KeyValuePair<string, string[]>(resource, new[] { id, variant, folder }));
+                string what = id + "|" + variant;
+                if (!folders.TryGetValue(what, out string first)) folders[what] = folder;
+                else if (first != folder && first.Length > 0 && folder.Length > 0) split = true;
+            }
+            var direct = new HashSet<string>();
+            foreach (KeyValuePair<string, string[]> t in list)
+            {
+                if (!split) t.Value[2] = "";
+                if (t.Value[1].Length == 0) direct.Add(t.Value[2] + "|" + t.Value[0]);
+            }
+            for (int i = 0, n = list.Count; i < n; i++)
+            {
+                string[] v = list[i].Value;
+                if (v[1].Length > 0) continue;
+                foreach (string twin in Originals.Twins(v[0]))
+                    if (direct.Add(v[2] + "|" + twin)) list.Add(new KeyValuePair<string, string[]>(list[i].Key, new[] { twin, "", v[2] }));
+            }
+            return list;
+        }
+
+        /// <summary>子来源的名字：包ID.文件夹名（没有文件夹 = 包自己）。</summary>
+        public static string SubSource(string modId, string folder) { return string.IsNullOrEmpty(folder) ? modId : modId + "." + folder; }
+
+        // 资源名 → 哪张立绘（的哪个差分）。认法只有这一处：启用中的 mod（上面）和没启用的包（EmbeddedEntries）共用。
+        //   资源名去掉 .png，取最后一段（/ 或 . 之后）：就是立绘键 → 那个键；按字段结构命名 → 那个键 / 差分；
+        //   是原图的贴图名（femaleLower_0、femaleLower_0-1087）且只对应一个键 → 那个键。认不出返回 false。
+        private static bool ResourceTarget(string resource, Dictionary<string, List<string>> byName, Func<string, bool> known, out string id, out string variant)
+        {
+            id = null; variant = "";
+            if (!resource.EndsWith(".png", StringComparison.OrdinalIgnoreCase)) return false;
+            string stem = resource.Substring(0, resource.Length - 4);
+            stem = stem.Substring(Math.Max(stem.LastIndexOf('/'), stem.LastIndexOf('.')) + 1);
+            if (stem.Length == 0) return false;
+            if (known(stem)) { id = stem; return true; }
+            if (PortraitTags.TryStructure(stem, out string field, out string suffix) && stem.StartsWith(field, StringComparison.Ordinal)) { id = field; variant = suffix; return true; }
+            string alias = ResourceAliases.Of(stem);   // 名字上看不出的对应关系（见 Compat/ResourceAliases.cs）
+            if (alias != null && Originals.Get(alias) != null) { id = alias; return true; }
+            string named = stem;
+            int dash = stem.LastIndexOf('-');
+            if (!byName.ContainsKey(named) && dash > 0 && int.TryParse(stem.Substring(dash + 1), out _)) named = stem.Substring(0, dash);
+            // 几张原图同名时（游戏把 femaleLower1 和 augLLFemale1 切自同一张图，名字都叫 femaleLower_0）分不出这张是给谁的：不收，
+            //   这几个键由“其他 mod 写进表的”来源（对方 mod 自己按它的表写进去的那张）提供，不会配错。
+            if (!byName.TryGetValue(named, out List<string> keys) || keys.Count != 1) return false;
+            id = keys[0];
+            return true;
+        }
+
+        /// <summary>0.9.9 一批 DLL 资源名 → 包的图片清单（伴生 mod 读没启用的包的 DLL 时用；认法与启用中的 mod 完全相同）。原版立绘表就绪后调。</summary>
+        public static List<PackEntry> EmbeddedEntries(IEnumerable<string> resourceNames)
+        {
+            var list = new List<PackEntry>();
+            if (resourceNames == null || !Ready) return list;
+            var names = new List<string>(resourceNames);
+            names.Sort(StringComparer.Ordinal);   // 同一张立绘有几份时的先后与启用时一致（R18Full 在 R18Half 前）
+            foreach (KeyValuePair<string, string[]> t in ResourceTargets(names, stem => Originals.Get(stem) != null))
+                list.Add(new PackEntry(t.Value[0], t.Key, t.Value[1].Length > 0 ? t.Value[1] : null, true) { Sub = t.Value[2].Length > 0 ? t.Value[2] : null });
+            return list;
         }
 
         /// <summary>停用时 / mod 列表变了：打包在 DLL 里的图下次重扫。</summary>
@@ -756,6 +837,14 @@ namespace TextureExtend
         }
 
         // 两遍：先本体（来源要先成立），再差分（差分归到同一来源；那个来源没有本体时算共享差分）
+        // 登记进来的新立绘自带什么标签：按字段结构命名的（femaleMiner3）照结构；“池名_任意”的（femaleBM_psrl_bm_f01，0.9.12）照那个池；其余只有 custom
+        private static string[] NewTags(string id)
+        {
+            if (PortraitTags.TryStructure(id, out string f, out string v) && f == id && v.Length == 0) return PortraitTags.Of(id);
+            string pool = PortraitTags.PoolOf(id);
+            return pool != null && id.Length > pool.Length + 1 && id[pool.Length] == '_' ? PortraitTags.Of(pool + "1") : new[] { CustomTag };
+        }
+
         private static void Apply(List<Registration> list)
         {
             foreach (Registration r in list)
@@ -766,7 +855,7 @@ namespace TextureExtend
                 {
                     // ClaudeNote: 0.6.0 登记的新立绘按字段结构命名的（femaleMiner3）自动带上性别 / 派系标签，其余只有 custom
                     if (p == null)
-                        work[r.id] = p = new Portrait { Field = r.id, Tags = PortraitTags.TryStructure(r.id, out string f, out string v) && f == r.id && v.Length == 0 ? PortraitTags.Of(r.id) : new[] { CustomTag } };
+                        work[r.id] = p = new Portrait { Field = r.id, Tags = NewTags(r.id) };
                     Candidate c = p.CandidateOf(r.source);
                     if (c == null) p.candidates.Add(c = new Candidate { source = r.source });
                     // ClaudeNote: 0.8.0 同来源同名的另一张图（Lune：自动分个编号）。认得出“是另一张”的只有磁盘图片（路径不同 = 指纹不同）：

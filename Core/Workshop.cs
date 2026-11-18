@@ -11,13 +11,13 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using Newtonsoft.Json;
-using TextureExtend.TagSystem;
+using ProbablyExtendFramework.TagSystem;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     internal static class Workshop
     {
-        internal const string Owner = "Lune.TextureExtend.Workshop";
+        internal const string Owner = "Lune.ProbablyExtendFramework.Workshop";
         internal const string Portrait = "portrait", Item = "item";
         private const string Folder = "Workshop/", StateFile = Folder + "Workshop.json", CatalogFile = Folder + "Catalog.json";
         internal const string CsvFile = Folder + "TextureExtend.csv";
@@ -25,6 +25,8 @@ namespace TextureExtend
         internal sealed class Target
         {
             public string id, src, key, name; public string[] tags; public string[] types; public string[] variants;
+            public string sig;                          // images 里的：这张图的身份串（file|… / res|…；游戏原图和已载入的 mod 贴图没有）。0.9.7 工坊缩略图在标题界面靠它读原图
+            public Dictionary<string, string> vsigs;    // portrait 里的：差分 → 身份串（现在选中来源的）
             public string atlas, sprite; public bool modSprite;   // 道具的图在哪（0.9.2：标题界面没有道具目录，缩略图靠这三样直接取）
         }   // variants：立绘的差分（工坊预览用）   // types：道具的主分类（小写）；立绘没有。key：只有 images 里的有，完整写法 来源:图ID~编号
         // ClaudeNote: 0.8.0 images = 全部贴图，一个来源一张（Lune：工坊窗口是全列出）。portrait 仍是一个图 ID 一条——
@@ -126,6 +128,36 @@ namespace TextureExtend
             return found;
         }
 
+        private static HashSet<string> gameKeys;
+        private static CatalogData gameKeysOf;
+
+        /// <summary>目录里记着这是游戏自带的立绘键吗（标题界面没有立绘表时用）。</summary>
+        internal static bool KnowsGameKey(string id)
+        {
+            if (gameKeys == null || gameKeysOf != Catalog)
+            {
+                gameKeysOf = Catalog;
+                gameKeys = new HashSet<string>();
+                foreach (Target t in Catalog.images ?? new List<Target>()) if (t.src == ItemDefs.Game) gameKeys.Add(t.id);
+            }
+            return gameKeys.Contains(id);
+        }
+
+        /// <summary>目录里记的身份串（标题界面用；店面里直接问立绘库）。key 可以是完整写法，也可以只是图 ID（= 现在选中的那张）。</summary>
+        internal static string SigOf(string key, string variant)
+        {
+            string id = ImageKey.IdOf(key);
+            Target root = Catalog.portrait?.Find(t => t.id == id);
+            if (!string.IsNullOrEmpty(variant))
+            {
+                Target at = ImageKey.Full(key) ? Catalog.images?.Find(t => t.key == key) : null;   // 写明了来源：那个来源自己的差分
+                if (at?.vsigs != null && at.vsigs.TryGetValue(variant, out string own)) return own;
+                return root?.vsigs != null && root.vsigs.TryGetValue(variant, out string vs) ? vs : null;
+            }
+            string full = ImageKey.Full(key) ? key : root?.key;
+            return full == null ? null : Catalog.images?.Find(t => t.key == full)?.sig;
+        }
+
         // 在店面里、后台完整扫完一遍后由 Baker 调（道具逐个分帧记）。building = 正在拼的新快照
         private static CatalogData building;
         private static string lastSaved;
@@ -136,9 +168,31 @@ namespace TextureExtend
             foreach (Portrait p in PortraitLibrary.All)
             {
                 string[] tags = Without(p.Tags, Portrait);
-                building.portrait.Add(new Target { id = p.Field, src = p.Source, key = ImageKey.Make(p.Source, p.Field), tags = tags, variants = new List<string>(p.Variants).ToArray() });
+                var variants = new List<string>(p.Variants);
+                Dictionary<string, string> vsigs = null;
+                foreach (string v in variants)
+                {
+                    string vs = PortraitLibrary.FileSignature(p.Field, v);
+                    if (vs == null) continue;
+                    if (vsigs == null) vsigs = new Dictionary<string, string>();
+                    vsigs[v] = vs;
+                }
+                building.portrait.Add(new Target { id = p.Field, src = p.Source, key = ImageKey.Make(p.Source, p.Field), tags = tags, variants = variants.ToArray(), vsigs = vsigs });
+                // ClaudeNote: 1.0.0 差分按来源各记各的（Lune：有差分的只有深空娘化，但它不是选中的来源时，工坊里一张差分都看不到——
+                //   之前只记了“现在选中的来源”的差分）。
                 foreach (string key in PortraitLibrary.ImagesOf(p.Field))
-                    building.images.Add(new Target { id = p.Field, key = key, src = ImageKey.SourceOf(key), tags = tags });
+                {
+                    List<string> own = PortraitLibrary.VariantsAt(key);
+                    Dictionary<string, string> ownSigs = null;
+                    foreach (string v in own)
+                    {
+                        string vs = PortraitLibrary.ImageSignature(key, v);
+                        if (vs == null) continue;
+                        if (ownSigs == null) ownSigs = new Dictionary<string, string>();
+                        ownSigs[v] = vs;
+                    }
+                    building.images.Add(new Target { id = p.Field, key = key, src = ImageKey.SourceOf(key), tags = tags, sig = PortraitLibrary.ImageSignature(key, null), variants = own.Count > 0 ? own.ToArray() : null, vsigs = ownSigs });
+                }
             }
         }
 

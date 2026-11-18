@@ -9,9 +9,9 @@ using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
 using UnityEngine;
-using TextureExtend.TagSystem;
+using ProbablyExtendFramework.TagSystem;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     public static class Sources
     {
@@ -95,6 +95,8 @@ namespace TextureExtend
             if (ta != tb) return ta > tb;
             int pa = Packs.PriorityOf(a.source), pb = Packs.PriorityOf(b.source);
             if (pa != pb) return pa > pb;
+            string pack = PackShelf.PackOf(a.source);
+            if (pack != null && pack == PackShelf.PackOf(b.source)) return a.order < b.order;   // 0.9.12 同一个包的几套图（子来源）：先登记的那套优先（全身在半身前）
             if (ta == 2) return a.order > b.order;
             return string.Compare(Label(a.source), Label(b.source), StringComparison.OrdinalIgnoreCase) < 0;
         }
@@ -137,8 +139,26 @@ namespace TextureExtend
             string pack = Packs.NameOf(source);
             if (pack != null) return pack;
             LoadedMod mod = ModLoader.Mods?.Find(m => m?.Manifest != null && m.Manifest.ID == source);
-            return mod?.Manifest?.Name ?? source;
+            if (mod != null) return mod.Manifest.Name ?? source;
+            // 0.9.12 子来源（包ID.文件夹名，见 PortraitLibrary.SubSource）：那一套的名字 · 包名
+            if (ModLoader.Mods != null)
+                foreach (LoadedMod m in ModLoader.Mods)
+                {
+                    string id = m?.Manifest?.ID;
+                    if (id == null || source.Length <= id.Length + 1 || source[id.Length] != '.' || !source.StartsWith(id, StringComparison.Ordinal)) continue;
+                    string folder = source.Substring(id.Length + 1);
+                    foreach (string[] n in subNames) if (n[0] == folder) { folder = Entry.Chinese ? n[1] : n[2]; break; }
+                    return folder + " · " + (m.Manifest.Name ?? id);   // 那一套的名字放前面：长名字被截断时还分得清是哪一套
+                }
+            return source;
         }
+
+        // 子来源文件夹名的显示名：{ 文件夹, 中文, 英文 }。没列的直接显示文件夹名
+        private static readonly string[][] subNames =
+        {
+            new[] { "R18Full", "全身", "full body" },
+            new[] { "R18Half", "半身", "half body" },
+        };
 
         // ── 玩家设置 ──
 
@@ -174,6 +194,29 @@ namespace TextureExtend
             Save();
         }
 
+        /// <summary>设成主来源：全局顺序的第一位（0.9.8 工坊“来源选择”页）。null / 空 = 不指定主来源（清空全局顺序，回到默认排法）。</summary>
+        public static void SetMain(string source)
+        {
+            if (string.IsNullOrEmpty(source)) { if (S.order.Count == 0) return; S.order.Clear(); Save(); return; }
+            if (S.order.Count > 0 && S.order[0] == source) return;
+            S.order.Remove(source);
+            S.order.Insert(0, source);
+            Save();
+        }
+
+        /// <summary>恢复游戏原版（1.0.0，来源一览页的按钮）：逐张指定、按组指定全部取消，立绘包全部取消激活，主来源设为游戏原版。</summary>
+        public static void RestoreVanilla()
+        {
+            settings = new Settings();
+            settings.order.Add(PortraitLibrary.GameSource);
+            Write();
+            PackShelf.Apply();
+            Applied();
+        }
+
+        /// <summary>主来源（全局顺序的第一位）；没指定返回 null。</summary>
+        public static string Main => S.order.Count > 0 ? S.order[0] : null;
+
         /// <summary>从全局顺序里拿掉（回到默认排法）。</summary>
         public static void Unorder(string source) { if (S.order.Remove(source)) Save(); }
 
@@ -181,6 +224,66 @@ namespace TextureExtend
         {
             settings = new Settings();
             Save();
+        }
+
+        // ── 立绘预设（0.9.11，Lune 2026-11-18）：把现在这套来源设置（主来源 / 顺序、激活了哪些包、逐张指定、按组指定）存成一个名字，随时换回来。
+        //   一个预设一个文件：ModData/<本 mod>/PortraitPreset/<名字>.json，内容就是 Sources.json 那样的一份。
+
+        internal const string PresetFolder = "PortraitPreset/";
+
+        /// <summary>预设名里不能当文件名的字符换成下划线；最长 40 个字。空的返回 null。</summary>
+        internal static string PresetName(string typed)
+        {
+            var b = new System.Text.StringBuilder();
+            foreach (char c in (typed ?? "").Trim()) b.Append(c < ' ' || "\\/:*?\"<>|.".IndexOf(c) >= 0 ? '_' : c);
+            string name = b.Length > 40 ? b.ToString(0, 40) : b.ToString();
+            return name.Trim().Length == 0 ? null : name.Trim();
+        }
+
+        /// <summary>已经存过的预设（按名字排）。</summary>
+        internal static List<string> Presets()
+        {
+            var list = new List<string>();
+            try
+            {
+                foreach (string path in ModHelper.ListModDataFiles(Painter.ModId) ?? new List<string>())
+                {
+                    string p = path.Replace('\\', '/');
+                    if (!p.StartsWith(PresetFolder, StringComparison.OrdinalIgnoreCase) || !p.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) continue;
+                    string name = p.Substring(PresetFolder.Length, p.Length - PresetFolder.Length - 5);
+                    if (name.Length > 0 && name.IndexOf('/') < 0) list.Add(name);
+                }
+            }
+            catch (Exception ex) { Entry.Warn("presets not listed: " + ex.Message); }
+            list.Sort(string.CompareOrdinal);
+            return list;
+        }
+
+        internal static bool SavePreset(string name)
+        {
+            try { ModHelper.WriteModDataFileText(Painter.ModId, PresetFolder + name + ".json", JsonConvert.SerializeObject(S, Formatting.Indented)); return true; }
+            catch (Exception ex) { Entry.Warn("preset not saved: " + ex.Message); return false; }
+        }
+
+        /// <summary>换成这个预设：整套来源设置替换掉，立刻生效（店面里即时，标题界面读档后）。</summary>
+        internal static bool LoadPreset(string name)
+        {
+            try
+            {
+                string text = ModHelper.ReadModDataFileText(Painter.ModId, PresetFolder + name + ".json");
+                Settings next = string.IsNullOrEmpty(text) ? null : JsonConvert.DeserializeObject<Settings>(text);
+                if (next == null) return false;
+                if (next.order == null) next.order = new List<string>();
+                if (next.groups == null) next.groups = new List<string[]>();
+                if (next.portraits == null) next.portraits = new Dictionary<string, string>();
+                if (next.packsOn == null) next.packsOn = new List<string>();
+                settings = next;
+                Write();
+                PackShelf.Apply();   // 激活了哪些包变了
+                Applied();
+                return true;
+            }
+            catch (Exception ex) { Entry.Warn("preset not loaded: " + ex.Message); return false; }
         }
 
         private static void Save() { Write(); Applied(); }

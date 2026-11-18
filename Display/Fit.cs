@@ -8,7 +8,7 @@ using System.Collections.Generic;
 using Newtonsoft.Json;
 using UnityEngine;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     public static class Fit
     {
@@ -18,6 +18,8 @@ namespace TextureExtend
         internal static bool Dirty { get; private set; }
         /// <summary>自动适配开关（配置项 autoFit）。关掉 = 只按画布对齐原版。</summary>
         internal static bool Enabled = true;
+        /// <summary>自动大小关着时的默认缩放（设置里的“立绘默认大小”，1 = 画布对齐原版）。作者给包写了 scale 的不受影响。</summary>
+        internal static float Manual = 1f;
 
         private static Dictionary<string, Dictionary<string, float>> All
         {
@@ -48,12 +50,15 @@ namespace TextureExtend
             if (string.IsNullOrEmpty(source) || source == PortraitLibrary.GameSource) return 1f;
             float? authored = Packs.AuthoredScale(source);
             if (authored.HasValue) return authored.Value;
-            if (!Enabled) return 1f;
+            if (!Enabled) return Manual;   // 1.0.0 自动大小关着：用玩家在设置里拉的默认大小
             if (scaleCache.TryGetValue(source, out float have)) return have;
             float s = FitMath.Scale(RatioOf(PortraitLibrary.GameSource), RatioOf(source));
             scaleCache[source] = s;
             return s;
         }
+
+        /// <summary>设置改了（自动大小开关 / 默认大小）：缩放结论全部重算，显示用的图重做。</summary>
+        internal static void Changed() { scaleCache.Clear(); Display.Clear(); }
 
         /// <summary>来源的内容占比（中位数）；样本不够返回 0。</summary>
         public static float RatioOf(string source)
@@ -182,7 +187,7 @@ namespace TextureExtend
                 float? authored = Packs.AuthoredScale(source);
                 b.Append("\n  ").Append(Sources.Label(source)).Append(" [").Append(source).Append("]: ratio ")
                  .Append(r > 0f ? r.ToString("0.00") : "? (" + SamplesOf(source) + " sample(s))")
-                 .Append(" → scale ").Append(ScaleOf(source).ToString("0.00")).Append(authored.HasValue ? " (set by the pack)" : !Enabled ? " (auto fit off)" : "");
+                 .Append(" → scale ").Append(ScaleOf(source).ToString("0.00")).Append(authored.HasValue ? " (set by the pack)" : !Enabled ? " (auto size off: default size from settings)" : "");
             }
             return b.ToString();
         }

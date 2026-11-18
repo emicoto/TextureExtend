@@ -6,7 +6,7 @@ using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 
-namespace TextureExtend.WorkshopUi
+namespace ProbablyExtendFramework.WorkshopUi
 {
     internal static class Skin
     {

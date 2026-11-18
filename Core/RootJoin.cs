@@ -12,7 +12,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     internal static class RootJoin
     {
@@ -49,6 +49,9 @@ namespace TextureExtend
             autos.RemoveAll(a => a.owner == owner && a.portrait == portrait);
             autos.Add(new Auto { owner = owner, portrait = portrait, when = when });
         }
+
+        /// <summary>这张立绘归进了别人的 root_key 组（它是那张立绘的差分候选，不是独立的来客立绘）。</summary>
+        internal static bool IsMember(string portrait) { return joins.Exists(j => j.member == portrait); }
 
         internal static void Remove(string owner)
         {

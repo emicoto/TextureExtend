@@ -6,7 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     internal static class DevPanel
     {
@@ -57,7 +57,7 @@ namespace TextureExtend
         {
             if (CustomUIManager.Instance == null) return;
             Close();
-            CustomUIBuilder b = CustomUIManager.Window(WindowId, T("TextureExtend 调试面板", "TextureExtend Debug"))
+            CustomUIBuilder b = CustomUIManager.Window(WindowId, T("扩展框架调试面板", "Extend Framework Debug"))
                 .SetSize(620f, 600f).Center().SetDraggable(true).SetCloseOnEscape();
 
             b.BeginTabs();

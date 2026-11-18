@@ -7,7 +7,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     /// <summary>一条临时状态定义。用 Painter.Pulse(...) 创建，链式补全；缺 On / Tag 不生效。</summary>
     public sealed class PulseDef

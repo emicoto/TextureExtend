@@ -3,7 +3,7 @@
 //   只在统一重算点（读档、起床、开关门、过夜、来客换人）调，不逐帧。
 using System.Collections.Generic;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     internal static class Items
     {

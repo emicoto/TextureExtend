@@ -2,9 +2,9 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using TextureExtend.TagSystem;
+using ProbablyExtendFramework.TagSystem;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     public static partial class Painter
     {
@@ -61,6 +61,9 @@ namespace TextureExtend
 
         /// <summary>换缓存的存放处（伴生 mod 用：它有“文件”权限，把成品图缓存放进自己的文件夹）。null = 回到 ModData。见 Display/Cache.cs。</summary>
         public static void UseCacheStore(ICacheStore store) { Cache.UseStore(store); NeedScan = true; }
+
+        /// <summary>交一个“读没启用的 mod 的 DLL 里的图片”的读取器（伴生 mod 用，见 ExternalImages 的 ext 身份串）。null = 撤掉。</summary>
+        public static void UseImageReader(Func<string, string, byte[]> reader) { ExternalImages.Reader = reader; }
 
         // ── 0.6.0 接触面自检、显示方案、自适配（诊断与扩展用） ──
 

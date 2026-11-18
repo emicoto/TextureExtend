@@ -9,7 +9,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     internal sealed class ClickShield : MonoBehaviour
     {

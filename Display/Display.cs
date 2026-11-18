@@ -5,7 +5,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     public static class Display
     {
@@ -90,7 +90,7 @@ namespace TextureExtend
             Texture2D tex = null;
             bool own = false;
             string sig = PortraitLibrary.FileSignature(portraitId, state);
-            if (sig != null) { tex = LoadFile(sig); own = tex != null; }
+            if (sig != null) { float t = Health.Now; tex = LoadFile(sig); own = tex != null; Health.Took("display: read and decode a portrait image", t); }
             else
             {
                 Sprite src = PortraitLibrary.Resolve(portraitId, state);

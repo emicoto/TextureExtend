@@ -29,9 +29,9 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using TextureExtend.TagSystem;
+using ProbablyExtendFramework.TagSystem;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     internal static class CsvLoader
     {
@@ -205,6 +205,12 @@ namespace TextureExtend
                     string root = r["group"], when = r["when"];
                     if (id.Length == 0 || root.Length == 0) return false;
                     return RootJoin.Add(owner, id, root, when.Length > 0 ? When.Compile(when) : null);
+                }
+                case "pool":   // 0.9.12 立绘池：id = 立绘，group = 池名（原版的池如 femaleLower，或自己起的名字）
+                {
+                    if (id.Length == 0 || r["group"].Length == 0) return false;
+                    PortraitPools.Assign(owner, id, r["group"]);
+                    return true;
                 }
                 case "auto":   // 0.8.3 自动动态适配：id = 立绘，when = 限制条件（可空）
                 {

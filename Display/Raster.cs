@@ -10,7 +10,7 @@
 using System;
 using UnityEngine;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     internal static class Raster
     {

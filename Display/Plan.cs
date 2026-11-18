@@ -12,7 +12,7 @@ using System.Collections.Generic;
 using HarmonyLib;
 using UnityEngine;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     public enum PlanMode { Vanilla, Yield, Original, Framework }
 
@@ -87,7 +87,10 @@ namespace TextureExtend
 
         internal static void Install()
         {
-            Ports.Patch(Name, "来客等处按选中的来源显示立绘", () => AccessTools.Method(typeof(SpriteDict), nameof(SpriteDict.GetSprite)), prefix: new HarmonyMethod(typeof(PlanPort), nameof(Prefix)));
+            // ClaudeNote: 0.9.6 框架的裁决挪到后置、排在所有 mod 之后（见 Postfix 的说明）；前置只剩“显示键现取”这一件事
+            Ports.Patch(Name, "来客等处按选中的来源显示立绘", () => AccessTools.Method(typeof(SpriteDict), nameof(SpriteDict.GetSprite)),
+                prefix: new HarmonyMethod(typeof(PlanPort), nameof(Prefix)),
+                postfix: new HarmonyMethod(typeof(PlanPort), nameof(Postfix)) { priority = Priority.Last });
             Ports.Read("SpriteDict original entries", "原图基准（尺寸对齐、游戏原图来源）", () => SpriteDict.Instance == null ? null : Originals.Count > 0 ? null : "no original entries found");
         }
 
@@ -108,18 +111,52 @@ namespace TextureExtend
                     __result = again;
                     return false;
                 }
-                if (!Enabled) return true;
-                // ClaudeNote: 0.8.3 自动动态适配（Core/RootJoin.cs）：游戏抽到的键不变，只换显示哪张。对齐的还是 key 这张原图
-                string joined = RootJoin.StateFor(key);
-                if (joined == RootJoin.Vanilla) { Sprite og = Originals.Get(key); if (og == null) return true; __result = og; return false; }
-                Sprite s = joined != null ? Display.Get(key, joined) : null;
-                Plan plan = Plan.ForKey(key);
-                if (s == null) s = plan.Mode == PlanMode.Framework ? Display.Get(key) : plan.Mode == PlanMode.Original ? Originals.Get(key) : null;
-                if (s == null) return true;
-                __result = s;
-                return false;
+                // ClaudeNote: 0.9.12 立绘池里追加的新立绘（Core/PortraitPools.cs）：键不在游戏立绘表里，原版会报“找不到”并退回随机拾荒者。认出来就现取。
+                if (Enabled && __instance != null && __instance.spriteDictionary != null && !__instance.spriteDictionary.ContainsKey(key) && PortraitPools.IsExtra(key))
+                {
+                    Sprite extra = Display.Get(key);
+                    if (extra == null) return true;
+                    __result = extra;
+                    return false;
+                }
+                return true;
             }
             catch (Exception) { return true; }   // 绝不让异常进游戏的显示流程
+        }
+
+        // ClaudeNote: 0.9.6 Lune：“柜台来客缺手缺胳膊”，怀疑是自动适配改来客逻辑之后出现的——是的，但错在更早的结构上：
+        //   框架原来在前置里就把图换掉。白蛇娘化这类 mod 是在同一个入口的后置里换图的，而且拿“当时的返回值”当原图来算自己那张的大小和轴心。
+        //   它拿到的是框架的图（被自动适配缩过、轴心跟着换算过），于是它自己的立绘按错的轴心建出来并缓存：整张往下沉进柜台后面，
+        //   手和胳膊被柜台挡掉（实测：截图里的图与白蛇原图逐像素同大，只是下沉了画布高的 17%，正好是缩放 0.75 时的轴心偏移）。
+        //   现在：原版和别的 mod 先走完（它们看到的是真正的原图），框架最后才按显示方案决定要不要换。
+        //   选中的来源是“图打包在 DLL 里的 mod”、而且那个 mod 已经在这条链上自己换了图：让给它（Yield），大小、像素风格都是它自己的。
+        private static void Postfix(string key, ref Sprite __result)
+        {
+            try
+            {
+                if (!Enabled || !Painter.Running || Painter.Retired || string.IsNullOrEmpty(key)) return;
+                if (key.StartsWith(Display.KeyPrefix, StringComparison.Ordinal)) return;
+                // ClaudeNote: 0.8.3 自动动态适配（Core/RootJoin.cs）：游戏抽到的键不变，只换显示哪张。对齐的还是 key 这张原图
+                string joined = RootJoin.StateFor(key);
+                if (joined == RootJoin.Vanilla) { Sprite og = Originals.Get(key); if (og != null) __result = og; return; }
+                Sprite s = joined != null ? Display.Get(key, joined) : null;
+                if (s == null)
+                {
+                    Plan plan = Plan.ForKey(key);
+                    if (plan.Mode == PlanMode.Original) s = Originals.Get(key);
+                    else if (plan.Mode == PlanMode.Framework && !ShownByItsOwner(key, __result)) s = Display.Get(key);
+                }
+                if (s != null) __result = s;
+            }
+            catch (Exception) { }   // 绝不让异常进游戏的显示流程
+        }
+
+        // 选中的那张是某个 mod 打包在自己 DLL 里的图，而链上已经有人把原图换掉了：就是那个 mod 自己在显示
+        private static bool ShownByItsOwner(string key, Sprite incoming)
+        {
+            if (incoming == null || ReferenceEquals(incoming, Originals.Get(key))) return false;
+            string sig = PortraitLibrary.FileSignature(key, null);
+            return sig != null && sig.StartsWith("res|", StringComparison.Ordinal);
         }
     }
 }

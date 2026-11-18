@@ -9,7 +9,7 @@ using UnityEngine.Localization.Components;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     internal static class WorkshopEntry
     {

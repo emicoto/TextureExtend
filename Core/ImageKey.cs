@@ -5,7 +5,7 @@
 //   框架内部（物品标签、缓存文件、成品图）一律用完整写法，所以两个来源的同名图各有各的缓存，谁也不覆盖谁。
 using System;
 
-namespace TextureExtend
+namespace ProbablyExtendFramework
 {
     public static class ImageKey
     {

@@ -10,7 +10,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace TextureExtend.TagSystem
+namespace ProbablyExtendFramework.TagSystem
 {
     public static class ItemTags
     {
